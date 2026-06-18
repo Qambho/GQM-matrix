@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=69.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gqm-matrix"
+version = "0.1.0"
+description = "Goal-Question-Metric (GQM) matrix builder and analyzer"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.26.0",
+    "pandas>=2.2.0",
+    "openpyxl>=3.1.0",
+    "matplotlib>=3.8.0",
+    "seaborn>=0.13.0",
+    "pydantic>=2.6.0",
+    "python-dotenv>=1.0.0",
+    "click>=8.1.0",
+    "requests>=2.31.0",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+]
+
+[project.scripts]
+gqm-matrix = "gqm_matrix.cli:main"
+gqm-serve = "gqm_matrix.server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

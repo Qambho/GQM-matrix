@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GQM Matrix JH Engine</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="header">
+      <div>
+        <p class="eyebrow">GQM Matrix</p>
+        <h1>JH Engine Blueprint Dashboard</h1>
+        <p class="subtitle">Live Binance Futures data + Astro-KP matrix levels</p>
+      </div>
+      <div class="header-actions">
+        <span id="statusBadge" class="badge badge-idle">Idle</span>
+        <button id="refreshBtn" class="btn btn-primary">Run Blueprint</button>
+      </div>
+    </header>
+
+    <section class="controls card">
+      <div class="field">
+        <label for="symbolSelect">Asset</label>
+        <select id="symbolSelect">
+          <option value="BTCUSDT">BTCUSDT</option>
+          <option value="ETHUSDT">ETHUSDT</option>
+          <option value="BNBUSDT">BNBUSDT</option>
+          <option value="SOLUSDT">SOLUSDT</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="leverageInput">Leverage</label>
+        <input id="leverageInput" type="number" min="1" max="125" value="50" />
+      </div>
+      <div class="field field-wide">
+        <label>Market API</label>
+        <div class="api-chip">Binance USD-M Futures · Public REST</div>
+      </div>
+    </section>
+
+    <main class="grid">
+      <section class="card">
+        <h2>Market Snapshot</h2>
+        <div id="marketPanel" class="panel muted">Run the blueprint to load live market data.</div>
+      </section>
+
+      <section class="card">
+        <h2>Astro-KP Context</h2>
+        <div id="astroPanel" class="panel muted">Antardasa and KP cusp data will appear here.</div>
+      </section>
+
+      <section class="card card-wide">
+        <h2>Matrix Blueprint Levels</h2>
+        <div id="matrixPanel" class="panel muted">Entry, target, and stop-loss levels will render here.</div>
+        <div class="chart-wrap">
+          <canvas id="levelChart" width="960" height="280"></canvas>
+        </div>
+      </section>
+
+      <section class="card card-wide">
+        <h2>Future Horizon Windows</h2>
+        <ul id="windowsList" class="windows-list muted">
+          <li>No data yet.</li>
+        </ul>
+      </section>
+    </main>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
