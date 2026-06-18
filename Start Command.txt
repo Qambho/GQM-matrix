@@ -1,0 +1,32 @@
+cd c:\Users\HP\Documents\GitHub\GQM-matrix
+# First time only
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -e .
+# Start the server
+python -m gqm_matrix.server
+
+
+Then open http://127.0.0.1:8000 in your browser.
+
+Each time after that:
+
+cd c:\Users\HP\Documents\GitHub\GQM-matrix
+.\.venv\Scripts\Activate.ps1
+python -m gqm_matrix.server
+You should see something like:
+
+Uvicorn running on http://127.0.0.1:8000
+Stop the server with Ctrl + C.
+
+If Activate.ps1 is blocked (PowerShell policy):
+
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+Or start without activating the venv:
+
+cd c:\Users\HP\Documents\GitHub\GQM-matrix
+.\.venv\Scripts\python.exe -m gqm_matrix.server
+If port 8000 is already in use:
+
+Get-Process python* -ErrorAction SilentlyContinue | Stop-Process -Force
+python -m gqm_matrix.server
