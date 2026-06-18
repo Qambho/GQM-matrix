@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from gqm_matrix.jh_engine import GqmMatrixJHEngineV72
+from gqm_matrix.live_stream import start_live_stream, stop_live_stream, websocket_signals
 from gqm_matrix.market import BinanceMarketClient
 from gqm_matrix.schemas import BlueprintResponse, HealthResponse, MarketTickerResponse, SymbolListResponse
 
@@ -15,10 +17,20 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
 DATA_DIR = PROJECT_ROOT / "data"
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    live_ctx = await start_live_stream()
+    app.state.live_ctx = live_ctx
+    yield
+    await stop_live_stream(live_ctx)
+
+
 app = FastAPI(
-    title="GQM Matrix JH Engine API",
-    description="Astro-KP matrix blueprint service with Binance Futures market data.",
-    version="0.1.0",
+    title="GQM Matrix Platform",
+    description="Unified GQM platform: JH Engine blueprint + live data streamer.",
+    version="0.2.0",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -85,6 +97,11 @@ def get_blueprint(
         raise HTTPException(status_code=500, detail=f"Missing data file: {exc.filename}") from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Blueprint generation failed: {exc}") from exc
+
+
+@app.websocket("/ws/signals")
+async def ws_signals(websocket: WebSocket) -> None:
+    await websocket_signals(websocket)
 
 
 @app.get("/")

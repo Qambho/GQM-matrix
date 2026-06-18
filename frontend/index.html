@@ -3,71 +3,180 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>GQM Matrix JH Engine</title>
+  <title>GQM Matrix Platform</title>
   <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="stylesheet" href="/static/project2.css" />
 </head>
 <body>
-  <div class="app">
-    <header class="header">
-      <div>
-        <p class="eyebrow">GQM Matrix</p>
-        <h1>JH Engine Blueprint Dashboard</h1>
-        <p class="subtitle">Live Binance Futures data + Astro-KP matrix levels</p>
-      </div>
-      <div class="header-actions">
-        <span id="statusBadge" class="badge badge-idle">Idle</span>
-        <button id="refreshBtn" class="btn btn-primary">Run Blueprint</button>
-      </div>
-    </header>
+  <nav class="category-bar">
+    <div class="category-brand">GQM Matrix Platform</div>
+    <div class="category-tabs">
+      <button type="button" class="category-btn active" data-project="1">Project 1</button>
+      <button type="button" class="category-btn" data-project="2">Project 2</button>
+    </div>
+  </nav>
 
-    <section class="controls card">
-      <div class="field">
-        <label for="symbolSelect">Asset</label>
-        <select id="symbolSelect">
-          <option value="BTCUSDT">BTCUSDT</option>
-          <option value="ETHUSDT">ETHUSDT</option>
-          <option value="BNBUSDT">BNBUSDT</option>
-          <option value="SOLUSDT">SOLUSDT</option>
-        </select>
-      </div>
-      <div class="field">
-        <label for="leverageInput">Leverage</label>
-        <input id="leverageInput" type="number" min="1" max="125" value="50" />
-      </div>
-      <div class="field field-wide">
-        <label>Market API</label>
-        <div class="api-chip">Binance USD-M Futures · Public REST</div>
-      </div>
-    </section>
+  <div id="project-1" class="project-view active">
+    <div class="app">
+      <header class="header">
+        <div>
+          <p class="eyebrow">GQM Matrix</p>
+          <h1>JH Engine Blueprint Dashboard</h1>
+          <p class="subtitle">Live Binance Futures data + Astro-KP matrix levels</p>
+        </div>
+        <div class="header-actions">
+          <span id="statusBadge" class="badge badge-idle">Idle</span>
+          <button id="refreshBtn" class="btn btn-primary">Run Blueprint</button>
+        </div>
+      </header>
 
-    <main class="grid">
-      <section class="card">
-        <h2>Market Snapshot</h2>
-        <div id="marketPanel" class="panel muted">Run the blueprint to load live market data.</div>
-      </section>
-
-      <section class="card">
-        <h2>Astro-KP Context</h2>
-        <div id="astroPanel" class="panel muted">Antardasa and KP cusp data will appear here.</div>
-      </section>
-
-      <section class="card card-wide">
-        <h2>Matrix Blueprint Levels</h2>
-        <div id="matrixPanel" class="panel muted">Entry, target, and stop-loss levels will render here.</div>
-        <div class="chart-wrap">
-          <canvas id="levelChart" width="960" height="280"></canvas>
+      <section class="controls card">
+        <div class="field">
+          <label for="symbolSelect">Asset</label>
+          <select id="symbolSelect">
+            <option value="BTCUSDT">BTCUSDT</option>
+            <option value="ETHUSDT">ETHUSDT</option>
+            <option value="BNBUSDT">BNBUSDT</option>
+            <option value="SOLUSDT">SOLUSDT</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="leverageInput">Leverage</label>
+          <input id="leverageInput" type="number" min="1" max="125" value="50" />
+        </div>
+        <div class="field field-wide">
+          <label>Market API</label>
+          <div class="api-chip">Binance USD-M Futures · Public REST</div>
         </div>
       </section>
 
-      <section class="card card-wide">
-        <h2>Future Horizon Windows</h2>
-        <ul id="windowsList" class="windows-list muted">
-          <li>No data yet.</li>
-        </ul>
-      </section>
-    </main>
+      <main class="grid">
+        <section class="card">
+          <h2>Market Snapshot</h2>
+          <div id="marketPanel" class="panel muted">Run the blueprint to load live market data.</div>
+        </section>
+
+        <section class="card">
+          <h2>Astro-KP Context</h2>
+          <div id="astroPanel" class="panel muted">Antardasa and KP cusp data will appear here.</div>
+        </section>
+
+        <section class="card card-wide">
+          <h2>Matrix Blueprint Levels</h2>
+          <div id="matrixPanel" class="panel muted">Entry, target, and stop-loss levels will render here.</div>
+          <div class="chart-wrap">
+            <canvas id="levelChart" width="960" height="280"></canvas>
+          </div>
+        </section>
+
+        <section class="card card-wide">
+          <h2>Future Horizon Windows</h2>
+          <ul id="windowsList" class="windows-list muted">
+            <li>No data yet.</li>
+          </ul>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <div id="project-2" class="project-view" hidden>
+    <div class="project2-app">
+      <header class="project2-header">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div id="status-indicator" class="p2-status-dot pulse-light"></div>
+          <h1 class="project2-title">Godzilla Astro-Quant Deck</h1>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px;">
+          <button id="audio-toggle" type="button" class="p2-btn-secondary">Radar Audio: MUTED</button>
+          <div class="p2-badge">Engine: <span id="engine-status-text" class="p2-amber">CONNECTING</span></div>
+        </div>
+      </header>
+
+      <main class="project2-main">
+        <div class="p2-grid-4">
+          <div class="p2-card">
+            <span class="p2-label">Total Liquidations</span>
+            <span id="stat-total-liq" class="p2-value p2-rose">$0.00</span>
+            <div class="p2-muted" style="font-size:0.7rem;margin-top:8px;display:flex;justify-content:space-between;">
+              <span>Longs: <span id="stat-longs-wiped" class="p2-rose">$0</span></span>
+              <span>Shorts: <span id="stat-shorts-wiped" class="p2-emerald">$0</span></span>
+            </div>
+          </div>
+
+          <div class="p2-card">
+            <span class="p2-label">Dominant Liquidated Side</span>
+            <span id="stat-ratio-text" class="p2-value p2-muted">NEUTRAL</span>
+            <div class="p2-bar">
+              <div id="bar-longs" class="p2-bar-long" style="width:50%"></div>
+              <div id="bar-shorts" class="p2-bar-short" style="width:50%"></div>
+            </div>
+          </div>
+
+          <div class="p2-card">
+            <span class="p2-label">Whale Capital Ingested</span>
+            <span id="stat-whale-vol" class="p2-value p2-cyan">$0.00</span>
+          </div>
+
+          <div id="gauge-card" class="p2-card gauge-glow">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+              <span class="p2-label">Godzilla Momentum</span>
+              <span id="gauge-score-badge" class="p2-badge">STABLE COMPRESSION</span>
+            </div>
+            <span id="stat-gauge-score" class="p2-value p2-emerald">0%</span>
+            <div class="p2-bar" style="margin-top:10px;height:10px;">
+              <div id="bar-gauge" class="p2-bar-long" style="width:0%;background:linear-gradient(to right,#10b981,#fbbf24,#f43f5e);"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="p2-grid-3">
+          <div class="p2-card">
+            <h2 class="p2-label" style="color:#c084fc;margin-bottom:12px;">Cosmic Ingestion Matrix</h2>
+            <label class="p2-label" for="astro-dasa-input">Jagannatha Hora Dasas</label>
+            <textarea id="astro-dasa-input" class="p2-textarea" placeholder="Paste shorthand text (e.g., Merc, Sat, Ju...)"></textarea>
+            <label class="p2-label" for="astro-kp-input" style="margin-top:12px;">KP System Data</label>
+            <textarea id="astro-kp-input" class="p2-textarea" placeholder="Paste KP layout (e.g., 11th house Ju Ma Ve...)"></textarea>
+            <button id="analyzeBtn" type="button" class="p2-btn" style="margin-top:12px;">Execute Deep Confluence Analysis</button>
+          </div>
+
+          <div id="verdict-display-panel" class="p2-card">
+            <div style="display:flex;justify-content:space-between;border-bottom:1px solid #1e293b;padding-bottom:12px;margin-bottom:12px;">
+              <h2 class="p2-label" style="margin:0;color:#cbd5e1;">Confluence Verdict Matrix</h2>
+              <span id="verdict-badge" class="p2-badge">AWAITING DATA</span>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-bottom:12px;">
+              <div><span class="p2-label">Cosmic Alignment</span><span id="v-astro-state" class="p2-muted">Not Synthesized</span></div>
+              <div><span class="p2-label">Quant Agreement</span><span id="v-quant-state" class="p2-muted">Awaiting Signal</span></div>
+              <div><span class="p2-label">Systemic Bias</span><span id="v-bias-state" class="p2-value p2-muted">NEUTRAL BALANCE</span></div>
+            </div>
+            <div class="p2-card" style="background:#020617;">
+              <span class="p2-label" style="color:#c084fc;">Core Synthesis Narrative</span>
+              <p id="verdict-narrative-text" class="p2-muted" style="font-size:0.75rem;font-family:monospace;line-height:1.6;margin:0;">
+                Paste Jagannatha Hora and KP data, then run analysis to compute quantitative overlap.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div id="godzilla-cascade-banner" class="p2-banner hidden">
+          <div id="cascade-alert-content"></div>
+        </div>
+
+        <section>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+            <h2 style="margin:0;font-size:1.1rem;">Live Transaction & Liquidation Feed</h2>
+            <button id="clearFeedBtn" type="button" class="p2-btn-secondary">Clear Matrix Panel</button>
+          </div>
+          <div id="feed-container" class="p2-feed">
+            <div class="p2-feed-empty">Awaiting connection to live backend streams...</div>
+          </div>
+        </section>
+      </main>
+    </div>
   </div>
 
   <script src="/static/app.js"></script>
+  <script src="/static/project2.js"></script>
+  <script src="/static/shell.js"></script>
 </body>
 </html>
