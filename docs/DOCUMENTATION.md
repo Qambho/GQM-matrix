@@ -36,9 +36,9 @@ Open **http://127.0.0.1:8000** → **GQM Matrix** page → click **Fetch**. Full
 | Parameter | Default | Description |
 |-----------|---------|-------------|
 | `symbol` | `BTCUSDT` | Binance Futures pair |
-| `price_per_degree` (ppd) | `200` | Dollars per zodiac degree |
-| `leverage` | `50` | Position leverage |
-| Anchor recalibration | every **2 h** | Frozen 15m swing pivot |
+| `price_per_degree` (ppd fallback) | `200` | Fallback when ATR unavailable |
+| Dynamic PPD | ATR-driven | `(ATR₅ / 0.0458) × 0.5`, clamped 25–800 |
+| Anchor recalibration | every **5m candle close** | Frozen 5m swing pivot |
 | Live poll | every **1 s** | REST `/api/matrix/scan` |
 
 ---
@@ -50,7 +50,8 @@ Binance Futures API
         │
         ▼
 GodzillaProductionEngine (godzilla_engine.py)
-  ├── 15m swing anchor (mw_anchor.py)
+  ├── 5m swing anchor (mw_anchor.py)
+  ├── Dynamic PPD (dynamic_ppd.py)
   ├── Celestial ephemeris (ephem + Lahiri ayanamsha)
   ├── MW lattice grid
   └── Signal scanner
@@ -59,7 +60,31 @@ GodzillaProductionEngine (godzilla_engine.py)
 FastAPI /api/matrix/scan  ──►  frontend/app.js (Canvas chart)
 ```
 
-**Key design rule:** The **Sun anchor price** is frozen from the last confirmed **15m fractal swing** and must **never** equal live spot (CMP). Live price is tracked separately for plotting and alerts.
+**Key design rule:** The **Sun anchor price** is frozen from the last confirmed **5m fractal swing** and recalibrates on every **5m candle close**. **PPD** adapts each scan from 5-period ATR. Live price is tracked separately.
+
+---
+
+## Dynamic Price-Per-Degree (PPD)
+
+Lattice sensitivity adapts to micro-volatility:
+
+\[
+\text{PPD}_{\text{dynamic}} = \frac{ATR_5}{\text{moon\_velocity\_5m}} \times \text{scaling\_factor}
+\]
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| \(ATR_5\) | 5-bar rolling | True Range average on 5m series |
+| moon_velocity_5m | **0.0458** | Moon sidereal speed per 5m bar |
+| scaling_factor | **0.5** | Grid sensitivity multiplier |
+| min_ppd / max_ppd | **25 / 800** | Clamps to prevent grid blowout |
+| fallback_ppd | **200** | Used when ATR is invalid |
+
+\[
+\text{PPD} = \clamp(\text{PPD}_{\text{dynamic}},\; \text{min\_ppd},\; \text{max\_ppd})
+\]
+
+**Source:** `dynamic_ppd.calculate_dynamic_ppd`, `godzilla_engine.update_dynamic_ppd`
 
 ---
 
@@ -96,13 +121,13 @@ This is the **macro lattice spacing** between Primary Vector and Upper/Lower lat
 TR_t = \max\bigl(H_t - L_t,\; |H_t - C_{t-1}|,\; |L_t - C_{t-1}|\bigr)
 \]
 
-### Average True Range (14-period)
+### Average True Range (5-period, 5m)
 
 \[
-ATR = \frac{1}{14}\sum_{i=1}^{14} TR_i
+ATR_5 = \frac{1}{5}\sum_{i=1}^{5} TR_i
 \]
 
-*(Implemented as rolling mean in `godzilla_engine.py`.)*
+*(Default `atr_period=5` on the 5m feed.)*
 
 ### Dynamic Wick Tolerance
 
@@ -168,7 +193,7 @@ Active when separation is within **3°** of **0°, 90°, or 180°**:
 
 ## Frozen Swing Anchor
 
-### Fractal Swing Detection (15m)
+### Fractal Swing Detection (5m)
 
 A bar at index \(i\) is a **swing high** if:
 

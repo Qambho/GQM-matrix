@@ -163,7 +163,7 @@
               </select>
             </div>
             <div class="field-inline">
-              <label class="field-label" for="matrix-ppd">Price / Degree</label>
+              <label class="field-label" for="matrix-ppd">PPD Fallback</label>
               <input id="matrix-ppd" class="field-input" type="number" min="1" step="1" value="200" />
             </div>
             <div class="field-inline">
@@ -244,7 +244,7 @@
 
         <article class="card matrix-chart-card">
           <h2 class="section-title">MW Geometric Matrix</h2>
-          <p class="matrix-chart-caption">x → 360° zodiac · y → price · lattice grid refreshes every 2 hours</p>
+          <p class="matrix-chart-caption">x → 360° zodiac · y → price · lattice grid refreshes every 5 minutes</p>
           <div class="matrix-chart-stack">
             <canvas id="mx-lattice-chart" class="matrix-chart mw-matrix-canvas" width="640" height="360"></canvas>
             <canvas id="mx-markers-canvas" class="matrix-chart mw-matrix-overlay" width="640" height="360"></canvas>
@@ -316,7 +316,7 @@
   </div>
 
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" crossorigin="anonymous" />
-  <script src="/app.js?v=23"></script>
+  <script src="/app.js?v=24"></script>
   <script src="/docs.js?v=3"></script>
 </body>
 </html>

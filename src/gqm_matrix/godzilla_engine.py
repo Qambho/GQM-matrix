@@ -12,6 +12,14 @@ import pandas as pd
 import requests
 
 from gqm_matrix.celestial_aspects import analyze_confluence, degree_to_sign
+from gqm_matrix.dynamic_ppd import (
+    DEFAULT_ATR_PERIOD,
+    DEFAULT_MAX_PPD,
+    DEFAULT_MIN_PPD,
+    DEFAULT_SCALING_FACTOR,
+    MOON_VELOCITY_5M,
+    calculate_dynamic_ppd,
+)
 from gqm_matrix.mw_anchor import (
     FrozenSwingAnchor,
     build_frozen_swing_anchor,
@@ -101,12 +109,24 @@ class GodzillaProductionEngine:
         symbol: str = "BTCUSDT",
         price_per_degree: float = 200.0,
         static_anchor: float = 16000.0,
+        scaling_factor: float = DEFAULT_SCALING_FACTOR,
+        min_ppd: float = DEFAULT_MIN_PPD,
+        max_ppd: float = DEFAULT_MAX_PPD,
+        moon_velocity_5m: float = MOON_VELOCITY_5M,
     ) -> None:
         self.symbol = symbol.upper()
+        self.fallback_ppd = price_per_degree
         self.ppd = price_per_degree
         self.static_anchor = static_anchor
         self.ayanamsha = 24.2
         self.vector_map = AshtottariVectorMap()
+
+        self.scaling_factor = scaling_factor
+        self.min_ppd = min_ppd
+        self.max_ppd = max_ppd
+        self.moon_velocity_5m = moon_velocity_5m
+        self.atr_period = DEFAULT_ATR_PERIOD
+        self.ppd_meta: dict[str, Any] = {}
 
         self.account_balance = 1000.0
         self.risk_per_trade = 0.02
@@ -114,15 +134,21 @@ class GodzillaProductionEngine:
         self.maintenance_margin_rate = 0.005
 
         self.last_calibration_time: datetime | None = None
-        self.recalibration_interval = timedelta(hours=2)
-        self.anchor_lookback_interval = "15m"
-        self.anchor_lookback_limit = 48
+        self.last_anchor_candle_close: int | None = None
+        self.anchor_lookback_interval = "5m"
+        self.anchor_lookback_limit = 72
         self.frozen_anchor: FrozenSwingAnchor | None = None
 
         self.active_trade: dict[str, Any] | None = None
         self.trade_history: list[dict[str, Any]] = []
 
-    def fetch_market_data(self, interval: str = "5m", limit: int = 20) -> pd.DataFrame | None:
+    def fetch_market_data(
+        self,
+        interval: str = "5m",
+        limit: int = 20,
+        atr_period: int | None = None,
+    ) -> pd.DataFrame | None:
+        period = atr_period if atr_period is not None else self.atr_period
         params = {"symbol": self.symbol, "interval": interval, "limit": limit}
         try:
             response = requests.get(BINANCE_FUTURES_KLINES, params=params, timeout=10)
@@ -153,7 +179,7 @@ class GodzillaProductionEngine:
             df["tr2"] = (df["high"] - df["prev_close"]).abs()
             df["tr3"] = (df["low"] - df["prev_close"]).abs()
             df["true_range"] = df[["tr1", "tr2", "tr3"]].max(axis=1)
-            df["atr"] = df["true_range"].rolling(window=14).mean()
+            df["atr"] = df["true_range"].rolling(window=period).mean()
             return df
         except Exception as exc:
             logger.error("Market data fetch failed: %s", exc)
@@ -208,11 +234,44 @@ class GodzillaProductionEngine:
             "lower_lattice_node": round(linear_floor - (13.33 * self.ppd), 2),
         }
 
-    def calibrate_anchor(self) -> None:
-        df = self.fetch_market_data(
-            interval=self.anchor_lookback_interval,
-            limit=self.anchor_lookback_limit,
+    def update_dynamic_ppd(self, current_atr: float | None) -> float:
+        """Recalculate lattice sensitivity from 5-period ATR and Moon velocity."""
+        ppd, meta = calculate_dynamic_ppd(
+            current_atr,
+            moon_velocity_5m=self.moon_velocity_5m,
+            scaling_factor=self.scaling_factor,
+            min_ppd=self.min_ppd,
+            max_ppd=self.max_ppd,
+            fallback_ppd=self.fallback_ppd,
         )
+        self.ppd = ppd
+        self.ppd_meta = meta
+        if self.frozen_anchor is not None:
+            moon = self.frozen_anchor.moon_degree_at_pivot
+            self.static_anchor = self.frozen_anchor.anchor_price - (moon * ppd)
+        return ppd
+
+    def _completed_candle_close_time(self, df: pd.DataFrame) -> int | None:
+        """Binance close_time (ms) of the last fully closed candle."""
+        if df is None or len(df) < 2:
+            return None
+        return int(df.iloc[-2]["close_time"])
+
+    def should_recalibrate_anchor(self, df: pd.DataFrame) -> bool:
+        """True when a new 5m candle has closed since the last anchor calibration."""
+        if self.frozen_anchor is None:
+            return True
+        candle_close = self._completed_candle_close_time(df)
+        if candle_close is None:
+            return False
+        return candle_close != self.last_anchor_candle_close
+
+    def calibrate_anchor(self, df: pd.DataFrame | None = None) -> None:
+        if df is None:
+            df = self.fetch_market_data(
+                interval=self.anchor_lookback_interval,
+                limit=self.anchor_lookback_limit,
+            )
         if df is None or df.empty:
             logger.warning("Anchor calibration skipped: no market data.")
             return
@@ -225,11 +284,13 @@ class GodzillaProductionEngine:
         )
         self.static_anchor = self.frozen_anchor.static_anchor
         self.last_calibration_time = datetime.now(timezone.utc)
+        self.last_anchor_candle_close = self._completed_candle_close_time(df)
         logger.info(
-            "Anchor frozen: anchor_price=%.2f pivot=%s interval=%s",
+            "Anchor frozen (5m): anchor_price=%.2f pivot=%s ppd=%.2f candle_close=%s",
             self.frozen_anchor.anchor_price,
             self.frozen_anchor.pivot_type,
-            self.anchor_lookback_interval,
+            self.ppd,
+            self.last_anchor_candle_close,
         )
 
     def _serialize_trade(self, trade: dict[str, Any]) -> dict[str, Any]:
@@ -300,12 +361,10 @@ class GodzillaProductionEngine:
                 self.close_position(trade["tp"], current_time, "TAKE_PROFIT")
 
     def run_matrix_scanner(self) -> dict[str, Any]:
-        if self.last_calibration_time is None or (
-            datetime.now(timezone.utc) - self.last_calibration_time
-        ) >= self.recalibration_interval:
-            self.calibrate_anchor()
-
-        df_5m = self.fetch_market_data(interval="5m", limit=20)
+        df_5m = self.fetch_market_data(
+            interval="5m",
+            limit=max(20, self.anchor_lookback_limit),
+        )
         if df_5m is None or df_5m.empty:
             raise RuntimeError("Unable to fetch market data from Binance.")
 
@@ -315,8 +374,16 @@ class GodzillaProductionEngine:
         current_dt = current_time.to_pydatetime() if hasattr(current_time, "to_pydatetime") else current_time
         current_atr = df_5m["atr"].iloc[-2]
 
-        if self.frozen_anchor is None:
-            self.calibrate_anchor()
+        self.update_dynamic_ppd(float(current_atr) if not pd.isna(current_atr) else None)
+
+        if self.should_recalibrate_anchor(df_5m):
+            anchor_df = self.fetch_market_data(
+                interval=self.anchor_lookback_interval,
+                limit=self.anchor_lookback_limit,
+            )
+            self.calibrate_anchor(anchor_df if anchor_df is not None else df_5m)
+        elif self.frozen_anchor is None:
+            self.calibrate_anchor(df_5m)
 
         dynamic_wick_tolerance = (
             float(current_atr * 0.5) if not pd.isna(current_atr) else live_price * 0.0015
@@ -341,7 +408,7 @@ class GodzillaProductionEngine:
                 "live_price": round(live_price, 2),
             }
             mw_structure = {
-                "vertices": build_mw_vertices(frozen),
+                "vertices": build_mw_vertices(frozen, ppd=self.ppd),
                 "entry_degree": frozen.moon_degree_at_pivot,
                 "exit_degree": frozen.sun_degree_at_pivot,
             }
@@ -438,9 +505,15 @@ class GodzillaProductionEngine:
                 **grid,
                 "static_anchor": round(self.static_anchor, 2),
                 "price_per_degree": self.ppd,
+                "fallback_ppd": self.fallback_ppd,
+                "dynamic_ppd": self.ppd,
+                "ppd_source": self.ppd_meta.get("source", "fallback"),
+                "ppd_meta": self.ppd_meta,
+                "atr_period": self.atr_period,
                 "last_calibration": (
                     self.last_calibration_time.isoformat() if self.last_calibration_time else None
                 ),
+                "anchor_interval": self.anchor_lookback_interval,
             },
             "distances": {
                 "to_primary": round(dist_to_primary, 2),

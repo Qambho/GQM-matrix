@@ -13,7 +13,7 @@ import pandas as pd
 
 logger = logging.getLogger("MWAnchor")
 
-# Fractal bars each side for confirmed 15m swings
+# Fractal bars each side for confirmed 5m swings
 SWING_LEFT_BARS = 2
 SWING_RIGHT_BARS = 2
 
@@ -96,12 +96,12 @@ def _is_swing_low(df: pd.DataFrame, i: int, left: int, right: int) -> bool:
     return True
 
 
-def find_last_15m_swings(
+def find_last_swings(
     df: pd.DataFrame,
     left: int = SWING_LEFT_BARS,
     right: int = SWING_RIGHT_BARS,
 ) -> tuple[tuple[float, datetime, int] | None, tuple[float, datetime, int] | None]:
-    """Return the most recent confirmed swing high and swing low on the 15m series."""
+    """Return the most recent confirmed swing high and swing low on the series."""
     last_high: tuple[float, datetime, int] | None = None
     last_low: tuple[float, datetime, int] | None = None
     n = len(df)
@@ -118,21 +118,29 @@ def find_last_15m_swings(
     return last_high, last_low
 
 
+# Backward-compatible alias
+find_last_15m_swings = find_last_swings
+
+
 def identify_last_swing_pivot(
     df: pd.DataFrame,
+    interval_label: str = "5m",
 ) -> tuple[float, datetime, str, float, float]:
     """
-    Sun anchor = price of the last confirmed 15m swing high or swing low.
+    Sun anchor = price of the last confirmed swing high or swing low.
     Never uses CMP / last close as the anchor price.
     """
     lookback_high = float(df["high"].max())
     lookback_low = float(df["low"].min())
     last_close = float(df["close"].iloc[-1])
 
-    last_high, last_low = find_last_15m_swings(df)
+    last_high, last_low = find_last_swings(df)
 
     if last_high is None and last_low is None:
-        logger.warning("No fractal swings found on 15m — falling back to window extrema (not CMP).")
+        logger.warning(
+            "No fractal swings found on %s — falling back to window extrema (not CMP).",
+            interval_label,
+        )
         idx_high = df["high"].idxmax()
         idx_low = df["low"].idxmin()
         high_val = float(df.loc[idx_high, "high"])
@@ -154,7 +162,6 @@ def identify_last_swing_pivot(
     high_price, high_ts, high_idx = last_high
     low_price, low_ts, low_idx = last_low
 
-    # Most recent swing bar wins (last formed swing on 15m chart)
     if high_idx > low_idx:
         return high_price, high_ts, "swing_high", lookback_high, lookback_low
     return low_price, low_ts, "swing_low", lookback_high, lookback_low
@@ -166,14 +173,16 @@ def build_frozen_swing_anchor(
     ayanamsha: float,
     anchor_lookback_interval: str,
 ) -> FrozenSwingAnchor:
-    swing_price, pivot_dt, pivot_type, lookback_high, lookback_low = identify_last_swing_pivot(df)
+    swing_price, pivot_dt, pivot_type, lookback_high, lookback_low = identify_last_swing_pivot(
+        df,
+        interval_label=anchor_lookback_interval,
+    )
     last_close = float(df["close"].iloc[-1])
 
     moon_deg = sidereal_longitude(ephem.Moon(), pivot_dt, ayanamsha)
     sun_deg = sidereal_longitude(ephem.Sun(), pivot_dt, ayanamsha)
     mars_deg = sidereal_longitude(ephem.Mars(), pivot_dt, ayanamsha)
 
-    # Sun anchor price = 15m swing pivot only (never CMP)
     sun_anchor_price = swing_price
     anchor_price = swing_price
 
@@ -185,12 +194,13 @@ def build_frozen_swing_anchor(
     exit_upper = upper + expansion * 0.95
 
     logger.info(
-        "Sun anchor from 15m %s: price=%.2f @ %s | CMP=%.2f (not used) | interval=%s",
+        "Sun anchor from %s %s: price=%.2f @ %s | CMP=%.2f (not used) | ppd=%.2f",
+        anchor_lookback_interval,
         pivot_type,
         sun_anchor_price,
         pivot_dt.isoformat(),
         last_close,
-        anchor_lookback_interval,
+        ppd,
     )
 
     return FrozenSwingAnchor(
@@ -212,30 +222,49 @@ def build_frozen_swing_anchor(
     )
 
 
-def build_mw_vertices(frozen: FrozenSwingAnchor) -> dict[str, Any]:
+def build_mw_vertices(frozen: FrozenSwingAnchor, ppd: float | None = None) -> dict[str, Any]:
+    """Build MW vertices; optional ppd overrides frozen lattice prices for dynamic grid."""
+    source = f"{frozen.anchor_lookback_interval}_last_swing"
+    if ppd is not None and ppd != 0:
+        moon = frozen.moon_degree_at_pivot
+        static = frozen.anchor_price - (moon * ppd)
+        primary = static + (moon * ppd)
+        upper = primary + (13.33 * ppd)
+        lower = primary - (13.33 * ppd)
+        expansion = upper - primary
+        exit_upper = upper + expansion * 0.95
+        entry_upper = upper
+        entry_lower = lower
+        exit_lower = lower
+    else:
+        exit_upper = frozen.exit_upper_node
+        entry_upper = frozen.upper_lattice_node
+        entry_lower = frozen.lower_lattice_node
+        exit_lower = frozen.lower_lattice_node
+
     return {
         "A": {
             "label": "A",
             "degree": frozen.moon_degree_at_pivot,
-            "price": frozen.upper_lattice_node,
+            "price": entry_upper,
             "role": "entry_ceiling",
         },
         "B": {
             "label": "B",
             "degree": frozen.moon_degree_at_pivot,
-            "price": frozen.lower_lattice_node,
+            "price": entry_lower,
             "role": "entry_floor",
         },
         "C": {
             "label": "C",
             "degree": frozen.sun_degree_at_pivot,
-            "price": frozen.exit_upper_node,
+            "price": exit_upper,
             "role": "exit_peak",
         },
         "D": {
             "label": "D",
             "degree": frozen.sun_degree_at_pivot,
-            "price": frozen.lower_lattice_node,
+            "price": exit_lower,
             "role": "exit_floor",
         },
         "sun_crossing": {
@@ -244,24 +273,30 @@ def build_mw_vertices(frozen: FrozenSwingAnchor) -> dict[str, Any]:
             "price": frozen.sun_anchor_price,
             "anchor_price": frozen.sun_anchor_price,
             "role": "vector_cross",
-            "source": "15m_last_swing",
+            "source": source,
         },
     }
 
 
-def validate_anchor_prices(frozen: FrozenSwingAnchor, live_price: float) -> list[str]:
+def validate_anchor_prices(
+    frozen: FrozenSwingAnchor,
+    live_price: float,
+) -> list[str]:
     warnings: list[str] = []
     lo, hi = frozen.lookback_low, frozen.lookback_high
     margin = (hi - lo) * 0.15 if hi > lo else hi * 0.05
+    interval = frozen.anchor_lookback_interval
+    source_label = f"{interval}_last_swing"
 
     if abs(frozen.sun_anchor_price - live_price) < 0.01:
         warnings.append(
-            f"Sun anchor price equals CMP ({live_price:.2f}) — anchor must be 15m swing, not live spot"
+            f"Sun anchor price equals CMP ({live_price:.2f}) — anchor must be "
+            f"{interval} swing, not live spot"
         )
 
     checks = [
-        ("Sun anchor (15m swing)", frozen.sun_anchor_price, "15m_last_swing"),
-        ("Anchor pivot", frozen.anchor_price, "15m_last_swing"),
+        (f"Sun anchor ({interval} swing)", frozen.sun_anchor_price, source_label),
+        ("Anchor pivot", frozen.anchor_price, source_label),
     ]
     for name, price, source in checks:
         if price < lo - margin or price > hi + margin:

@@ -35,7 +35,7 @@ let matrixFetchActive = false;
 let matrixFetchTimer = null;
 let matrixFetchConfigKey = null;
 const MATRIX_FETCH_INTERVAL_MS = 1000;
-const MATRIX_CHART_INTERVAL_MS = 2 * 60 * 60 * 1000;
+const MATRIX_CHART_INTERVAL_MS = 5 * 60 * 1000;
 let matrixChartRefreshTimer = null;
 let matrixChartLastRefresh = 0;
 let matrixLastPayload = null;
@@ -392,7 +392,7 @@ function renderMatrixChartSection(data) {
     { label: "Primary Vector", value: frozenPrimary },
     { label: "Spot Price (live)", value: livePrice },
     { label: "Upper Lattice", value: frozenUpper },
-    { label: "Sun Anchor (15m swing)", value: anchor.sun_anchor_price ?? anchor.anchor_price ?? frozenPrimary },
+    { label: "Sun Anchor (5m swing)", value: anchor.sun_anchor_price ?? anchor.anchor_price ?? frozenPrimary },
   ];
 
   el("mx-lattice-panel").classList.remove("muted");
@@ -407,6 +407,8 @@ function renderMatrixChartSection(data) {
     .join("");
 
   el("mx-lattice-panel").innerHTML += `
+    <div class="matrix-kv"><span>Dynamic PPD</span><span>${fmtMoney(data.grid.price_per_degree)} · ${data.grid.ppd_source ?? "—"}</span></div>
+    <div class="matrix-kv"><span>PPD Fallback</span><span>${fmtMoney(data.grid.fallback_ppd ?? data.grid.price_per_degree)}</span></div>
     <div class="matrix-kv"><span>Static Anchor</span><span>${fmtMoney(anchor.static_anchor ?? data.grid.static_anchor)}</span></div>
     <div class="matrix-kv"><span>Anchor Pivot</span><span>${anchor.pivot_type ?? "—"} · ${anchor.anchor_timestamp ? new Date(anchor.anchor_timestamp).toLocaleString() : "—"}</span></div>
     <div class="matrix-kv"><span>Dist. to Primary</span><span>${fmtMoney(data.distances.to_primary)}</span></div>
@@ -423,10 +425,10 @@ function updateMatrixChartRefreshLabel() {
   if (!label || !matrixChartLastRefresh) return;
   const nextAt = matrixChartLastRefresh + MATRIX_CHART_INTERVAL_MS;
   const remainingMs = Math.max(0, nextAt - Date.now());
-  const hours = Math.floor(remainingMs / (60 * 60 * 1000));
-  const minutes = Math.floor((remainingMs % (60 * 60 * 1000)) / (60 * 1000));
+  const minutes = Math.floor(remainingMs / (60 * 1000));
+  const seconds = Math.floor((remainingMs % (60 * 1000)) / 1000);
   label.textContent =
-    remainingMs <= 0 ? "due now" : `in ${hours}h ${String(minutes).padStart(2, "0")}m`;
+    remainingMs <= 0 ? "due now" : `in ${minutes}m ${String(seconds).padStart(2, "0")}s`;
 }
 
 function shouldRefreshMatrixChart() {
@@ -645,7 +647,7 @@ function buildMwChartModel(data) {
     degree: anchorBlock.sun_degree_at_pivot ?? 180,
     price: anchorBlock.sun_anchor_price ?? anchorBlock.sun_crossing_price ?? anchorPrice,
     anchor_price: anchorBlock.sun_anchor_price ?? anchorPrice,
-    source: "15m_last_swing",
+    source: "5m_last_swing",
   };
 
   return {
@@ -674,8 +676,8 @@ function validateMwStructure(model, data) {
   console.log("lookback range:", lo, "–", hi);
 
   const audit = [
-    { name: "Sun anchor (15m swing)", price: model.vertices.sun_crossing.anchor_price ?? model.vertices.sun_crossing.price, source: model.vertices.sun_crossing.source || "15m_last_swing" },
-    { name: "Anchor pivot", price: model.anchorPrice, source: "15m_last_swing" },
+    { name: "Sun anchor (5m swing)", price: model.vertices.sun_crossing.anchor_price ?? model.vertices.sun_crossing.price, source: model.vertices.sun_crossing.source || "5m_last_swing" },
+    { name: "Anchor pivot", price: model.anchorPrice, source: "5m_last_swing" },
     { name: "Live spot", price: model.livePrice, source: "live_5m_feed" },
   ];
 
@@ -1111,7 +1113,7 @@ function drawMWMatrixChart(data) {
     diamond.x,
     diamond.y,
     "☉ Sun",
-    [fmtMoney(sunMeta.anchor_price ?? sunMeta.price), `${sunMeta.degree.toFixed(1)}°`, "15m swing"],
+    [fmtMoney(sunMeta.anchor_price ?? sunMeta.price), `${sunMeta.degree.toFixed(1)}°`, "5m swing"],
     { accent: "#fbbf24", position: "center-above" },
   );
 

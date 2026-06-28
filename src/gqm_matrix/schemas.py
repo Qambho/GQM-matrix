@@ -34,7 +34,13 @@ class MatrixGridSnapshot(BaseModel):
     lower_lattice_node: float
     static_anchor: float
     price_per_degree: float
-    last_calibration: str | None
+    last_calibration: str | None = None
+    fallback_ppd: float | None = None
+    dynamic_ppd: float | None = None
+    ppd_source: str | None = None
+    ppd_meta: dict[str, Any] | None = None
+    atr_period: int | None = None
+    anchor_interval: str | None = None
 
 
 class MatrixDistances(BaseModel):
