@@ -407,10 +407,11 @@ function renderMatrixChartSection(data) {
     .join("");
 
   el("mx-lattice-panel").innerHTML += `
-    <div class="matrix-kv"><span>Dynamic PPD</span><span>${fmtMoney(data.grid.price_per_degree)} · ${data.grid.ppd_source ?? "—"}</span></div>
-    <div class="matrix-kv"><span>PPD Fallback</span><span>${fmtMoney(data.grid.fallback_ppd ?? data.grid.price_per_degree)}</span></div>
-    <div class="matrix-kv"><span>Static Anchor</span><span>${fmtMoney(anchor.static_anchor ?? data.grid.static_anchor)}</span></div>
-    <div class="matrix-kv"><span>Anchor Pivot</span><span>${anchor.pivot_type ?? "—"} · ${anchor.anchor_timestamp ? new Date(anchor.anchor_timestamp).toLocaleString() : "—"}</span></div>
+    <div class="matrix-kv"><span>Dynamic PPD</span><span>${Number(data.grid.price_per_degree ?? 0).toFixed(2)} · ${data.grid.ppd_source ?? "—"} (×${data.grid.scaling_factor ?? 0.1})</span></div>
+    <div class="matrix-kv"><span>PPD Fallback</span><span>${Number(data.grid.fallback_ppd ?? 200).toFixed(0)}</span></div>
+    <div class="matrix-kv"><span>5m Swing Anchor</span><span>${fmtMoney(data.grid.swing_anchor_price ?? anchor.sun_anchor_price ?? anchor.anchor_price)}</span></div>
+    <div class="matrix-kv"><span>Moon @ Pivot</span><span>${data.grid.moon_degree_at_pivot ?? anchor.moon_degree_at_pivot ?? "—"}°</span></div>
+    <div class="matrix-kv"><span>Anchor Pivot</span><span>${data.grid.pivot_type ?? anchor.pivot_type ?? "—"} · ${anchor.anchor_timestamp ? new Date(anchor.anchor_timestamp).toLocaleString() : "—"}</span></div>
     <div class="matrix-kv"><span>Dist. to Primary</span><span>${fmtMoney(data.distances.to_primary)}</span></div>
     <div class="matrix-kv"><span>Dist. to Upper</span><span>${fmtMoney(data.distances.to_upper)}</span></div>
     <div class="matrix-kv matrix-chart-refresh-row"><span>Grid refresh</span><span id="mx-chart-next-refresh">—</span></div>`;

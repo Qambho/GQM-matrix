@@ -76,8 +76,8 @@ Lattice sensitivity adapts to micro-volatility:
 |-----------|---------|-------------|
 | \(ATR_5\) | 5-bar rolling | True Range average on 5m series |
 | moon_velocity_5m | **0.0458** | Moon sidereal speed per 5m bar |
-| scaling_factor | **0.5** | Grid sensitivity multiplier |
-| min_ppd / max_ppd | **25 / 800** | Clamps to prevent grid blowout |
+| scaling_factor | **0.1** | Grid sensitivity multiplier (0.1–0.2 range) |
+| min_ppd / max_ppd | **25 / 350** | Clamps to prevent grid blowout |
 | fallback_ppd | **200** | Used when ATR is invalid |
 
 \[

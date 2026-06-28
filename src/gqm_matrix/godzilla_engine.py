@@ -503,16 +503,24 @@ class GodzillaProductionEngine:
             },
             "grid": {
                 **grid,
-                "static_anchor": round(self.static_anchor, 2),
                 "price_per_degree": self.ppd,
                 "fallback_ppd": self.fallback_ppd,
                 "dynamic_ppd": self.ppd,
                 "ppd_source": self.ppd_meta.get("source", "fallback"),
+                "scaling_factor": self.scaling_factor,
                 "ppd_meta": self.ppd_meta,
                 "atr_period": self.atr_period,
+                "swing_anchor_price": (
+                    round(frozen.sun_anchor_price, 2) if frozen is not None else None
+                ),
+                "moon_degree_at_pivot": (
+                    round(frozen.moon_degree_at_pivot, 2) if frozen is not None else None
+                ),
+                "pivot_type": frozen.pivot_type if frozen is not None else None,
                 "last_calibration": (
                     self.last_calibration_time.isoformat() if self.last_calibration_time else None
                 ),
+                "last_anchor_candle_close": self.last_anchor_candle_close,
                 "anchor_interval": self.anchor_lookback_interval,
             },
             "distances": {

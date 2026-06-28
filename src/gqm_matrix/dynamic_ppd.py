@@ -9,9 +9,9 @@ import pandas as pd
 # Moon sidereal velocity scaled to a 5-minute bar (degrees per 5m).
 MOON_VELOCITY_5M = 0.0458
 
-DEFAULT_SCALING_FACTOR = 0.5
+DEFAULT_SCALING_FACTOR = 0.1
 DEFAULT_MIN_PPD = 25.0
-DEFAULT_MAX_PPD = 800.0
+DEFAULT_MAX_PPD = 350.0
 DEFAULT_ATR_PERIOD = 5
 
 

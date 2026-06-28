@@ -32,15 +32,20 @@ class MatrixGridSnapshot(BaseModel):
     primary_vector_support: float
     upper_lattice_node: float
     lower_lattice_node: float
-    static_anchor: float
+    static_anchor: float | None = None
     price_per_degree: float
     last_calibration: str | None = None
     fallback_ppd: float | None = None
     dynamic_ppd: float | None = None
     ppd_source: str | None = None
+    scaling_factor: float | None = None
     ppd_meta: dict[str, Any] | None = None
     atr_period: int | None = None
     anchor_interval: str | None = None
+    swing_anchor_price: float | None = None
+    moon_degree_at_pivot: float | None = None
+    pivot_type: str | None = None
+    last_anchor_candle_close: int | None = None
 
 
 class MatrixDistances(BaseModel):
