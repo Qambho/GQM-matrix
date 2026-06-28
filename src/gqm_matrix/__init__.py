@@ -1,8 +1,3 @@
-"""GQM (Goal-Question-Metric) matrix toolkit."""
+"""GQM Astro-Quant live stream platform."""
 
-from gqm_matrix.matrix import GQMMatrix
-from gqm_matrix.jh_engine import GqmMatrixJHEngineV72
-from gqm_matrix.models import Goal, Metric, Question
-
-__all__ = ["Goal", "Question", "Metric", "GQMMatrix", "GqmMatrixJHEngineV72"]
-__version__ = "0.1.0"
+__version__ = "1.0.0"

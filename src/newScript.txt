@@ -1,0 +1,338 @@
+import time
+import logging
+from datetime import datetime, timezone, timedelta
+import ephem
+import numpy as np
+import pandas as pd
+import requests
+
+# =====================================================================
+# SYSTEM LOGGING CONFIGURATION
+# =====================================================================
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s | %(levelname)s | %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S UTC'
+)
+logger = logging.getLogger("GodzillaEngine")
+
+# =====================================================================
+# ASHTOTTARI DASA MAPPING (28 NAKSHATRAS)
+# =====================================================================
+class AshtottariVectorMap:
+    def __init__(self):
+        self.dasa_map = {
+            "Ardra": "Sun", "Punarvasu": "Sun", "Pushya": "Sun", "Ashlesha": "Sun",
+            "Magha": "Moon", "Purva Phalguni": "Moon", "Uttara Phalguni": "Moon", "Hasta": "Moon",
+            "Chitra": "Mars", "Swati": "Mars", "Vishakha": "Mars", "Anuradha": "Mars",
+            "Jyeshtha": "Mercury", "Mula": "Mercury", "Purva Ashadha": "Mercury", "Uttara Ashadha": "Mercury",
+            "Abhijit": "Saturn", "Shravana": "Saturn", "Dhanishta": "Saturn", "Shatabhisha": "Saturn",
+            "Purva Bhadrapada": "Jupiter", "Uttara Bhadrapada": "Jupiter", "Revati": "Jupiter",
+            "Ashwini": "Rahu", "Bharani": "Rahu", "Krittika": "Rahu",
+            "Rohini": "Venus", "Mrigashirsha": "Venus"
+        }
+
+        self.boundaries = [
+            ("Ashwini", 0.0, 13.33), ("Bharani", 13.33, 26.66), ("Krittika", 26.66, 40.0),
+            ("Rohini", 40.0, 53.33), ("Mrigashirsha", 53.33, 66.66), ("Ardra", 66.66, 80.0),
+            ("Punarvasu", 80.0, 93.33), ("Pushya", 93.33, 106.66), ("Ashlesha", 106.66, 120.0),
+            ("Magha", 120.0, 133.33), ("Purva Phalguni", 133.33, 146.66), ("Uttara Phalguni", 146.66, 160.0),
+            ("Hasta", 160.0, 173.33), ("Chitra", 173.33, 186.66), ("Swati", 186.66, 200.0),
+            ("Vishakha", 200.0, 213.33), ("Anuradha", 213.33, 226.66), ("Jyeshtha", 226.66, 240.0),
+            ("Mula", 240.0, 253.33), ("Purva Ashadha", 253.33, 266.66),
+            ("Uttara Ashadha", 266.66, 276.66), ("Abhijit", 276.66, 280.88),
+            ("Shravana", 280.88, 293.33), ("Dhanishta", 293.33, 306.66), ("Shatabhisha", 306.66, 320.0),
+            ("Purva Bhadrapada", 320.0, 333.33), ("Uttara Bhadrapada", 333.33, 346.66), ("Revati", 346.66, 360.0)
+        ]
+
+    def get_nakshatra_and_lord(self, degree):
+        for name, start, end in self.boundaries:
+            if start <= degree < end:
+                return name, self.dasa_map[name]
+        return "Revati", "Jupiter"
+
+# =====================================================================
+# GODZILLA PRODUCTION ENGINE V4
+#
+# Fixes applied vs V3:
+#   1. close_position() PnL was computed as a leveraged percentage but then
+#      multiplied by a position_size that was already sized in raw risk-dollar
+#      terms (risk_amount / stop_distance). That double-counted leverage and
+#      made every trade's recorded PnL roughly (100 * leverage) too small,
+#      so the equity curve barely moved regardless of actual performance.
+#      Fixed: PnL is now computed directly as position_size * price_delta,
+#      which is consistent with how position_size was sized in the first place.
+#   2. There was no liquidation modeling. At high leverage, the exchange's
+#      forced-liquidation price can sit closer to entry than your algorithmic
+#      SL, meaning the exchange closes you out before your own stop ever
+#      triggers. The engine now computes an approximate isolated-margin
+#      liquidation price at entry and treats it as part of the effective stop
+#      whenever it's tighter than the algo SL, logging which one is binding.
+#   3. static_anchor was a fixed constant (16000), so the MW lattice nodes
+#      were permanently pinned near that level. If price has moved far from
+#      where that constant was set, primary_vector_support / lattice nodes
+#      never come near current price and entries stop firing. The anchor is
+#      now recalibrated periodically off a recent swing pivot.
+# =====================================================================
+class GodzillaProductionEngine:
+    def __init__(self, symbol="BTCUSDT", price_per_degree=200.0, static_anchor=16000.0):
+        self.symbol = symbol.upper()
+        self.ppd = price_per_degree
+        self.static_anchor = static_anchor  # fallback only; recalibrated below
+
+        # Astrological Constants
+        self.ayanamsha = 24.2
+        self.vector_map = AshtottariVectorMap()
+
+        # Risk Management & Portfolio State
+        self.account_balance = 1000.0  # Mock paper-trading balance
+        self.risk_per_trade = 0.02     # Risk 2% of account per trade
+        self.leverage = 50
+
+        # Liquidation modeling (isolated margin, minimum margin posted, no buffer)
+        # This is a simplification of exchange liquidation math (real engines use
+        # tiered maintenance margin rates that vary with notional size). Treat
+        # this as an approximation, not an exact match to any specific exchange.
+        self.maintenance_margin_rate = 0.005  # 0.5%, typical ballpark for BTC perps
+
+        # Anchor recalibration
+        self.last_calibration_time = None
+        self.recalibration_interval = timedelta(hours=6)
+        self.anchor_lookback_interval = "1h"
+        self.anchor_lookback_limit = 100
+
+        self.active_trade = None
+        self.trade_history = []
+
+    def fetch_market_data(self, interval="5m", limit=20):
+        """Fetches market data and calculates ATR for dynamic volatility sizing."""
+        url = "https://fapi.binance.com/fapi/v1/klines"
+        params = {"symbol": self.symbol, "interval": interval, "limit": limit}
+        try:
+            response = requests.get(url, params=params, timeout=10)
+            df = pd.DataFrame(response.json(), columns=[
+                'open_time', 'open', 'high', 'low', 'close', 'volume',
+                'close_time', 'quote_volume', 'trades', 'tb_base', 'tb_quote', 'ignore'
+            ])
+            df['timestamp'] = pd.to_datetime(df['open_time'], unit='ms', utc=True)
+            for col in ['open', 'high', 'low', 'close', 'volume']:
+                df[col] = df[col].astype(float)
+
+            df['prev_close'] = df['close'].shift(1)
+            df['tr1'] = df['high'] - df['low']
+            df['tr2'] = abs(df['high'] - df['prev_close'])
+            df['tr3'] = abs(df['low'] - df['prev_close'])
+            df['true_range'] = df[['tr1', 'tr2', 'tr3']].max(axis=1)
+            df['atr'] = df['true_range'].rolling(window=14).mean()
+
+            return df
+        except Exception as e:
+            logger.error(f"API Error: {e}")
+            return None
+
+    def calculate_celestial_coordinates(self, dt):
+        """Computes Sidereal longitudes anchored to UTC 0."""
+        utc_dt = dt.replace(tzinfo=timezone.utc)
+        ephem_date = utc_dt.strftime('%Y/%m/%d %H:%M:%S')
+
+        moon = ephem.Moon()
+        moon.compute(ephem_date)
+        moon_deg = (np.degrees(ephem.Ecliptic(moon).lon) - self.ayanamsha) % 360.0
+
+        mars = ephem.Mars()
+        mars.compute(ephem_date)
+        mars_deg = (np.degrees(ephem.Ecliptic(mars).lon) - self.ayanamsha) % 360.0
+
+        aspect_diff = abs(moon_deg - mars_deg) % 360.0
+        is_high_volume_aspect = any(
+            abs(aspect_diff - target) < 3.0 or abs(aspect_diff - (360.0 - target)) < 3.0
+            for target in [0.0, 90.0, 180.0]
+        )
+
+        return moon_deg, mars_deg, is_high_volume_aspect
+
+    def calculate_mw_vector_grid(self, moon_deg):
+        """Maps the Sidereal Moon degree to the Ashtottari Dasa lattice."""
+        nakshatra, lord = self.vector_map.get_nakshatra_and_lord(moon_deg)
+        linear_floor = self.static_anchor + (moon_deg * self.ppd)
+
+        return {
+            "nakshatra_active": nakshatra,
+            "dasa_lord": lord,
+            "primary_vector_support": round(linear_floor, 2),
+            "upper_lattice_node": round(linear_floor + (13.33 * self.ppd), 2),
+            "lower_lattice_node": round(linear_floor - (13.33 * self.ppd), 2)
+        }
+
+    def calibrate_anchor(self):
+        """
+        Re-anchors the price-time grid to a recent significant swing pivot
+        instead of a permanently fixed constant. Picks whichever of the
+        recent swing high / swing low is farther from the latest close,
+        treating that as the more significant pivot for this window.
+        """
+        df = self.fetch_market_data(interval=self.anchor_lookback_interval,
+                                     limit=self.anchor_lookback_limit)
+        if df is None or df.empty:
+            logger.warning("⚠️  Anchor calibration skipped: no market data returned.")
+            return
+
+        idx_high = df['high'].idxmax()
+        idx_low = df['low'].idxmin()
+        high_val, low_val = df.loc[idx_high, 'high'], df.loc[idx_low, 'low']
+        last_close = df['close'].iloc[-1]
+
+        if abs(high_val - last_close) >= abs(last_close - low_val):
+            pivot_price, pivot_time = high_val, df.loc[idx_high, 'timestamp']
+        else:
+            pivot_price, pivot_time = low_val, df.loc[idx_low, 'timestamp']
+
+        moon_deg, _, _ = self.calculate_celestial_coordinates(pivot_time)
+        self.static_anchor = pivot_price - (moon_deg * self.ppd)
+        self.last_calibration_time = datetime.now(timezone.utc)
+
+        logger.info(
+            f"⚙️  Anchor recalibrated to pivot ${pivot_price:,.2f} @ {pivot_time} "
+            f"(Moon {moon_deg:.2f}°) | New static_anchor: {self.static_anchor:.2f}"
+        )
+
+    def close_position(self, current_price, current_time, reason):
+        trade = self.active_trade
+        trade['exit_time'] = current_time
+        trade['exit_price'] = current_price
+        trade['status'] = reason
+
+        entry, exit_px = trade['entry'], current_price
+
+        # Direct dollar PnL from position size (in base asset units) * price
+        # delta. position_size was sized as risk_amount / stop_distance, so
+        # this is the formula consistent with that sizing — NOT a leveraged
+        # percentage applied on top of an already risk-sized quantity.
+        if trade['bias'] == 'LONG':
+            pnl_amount = trade['position_size'] * (exit_px - entry)
+        else:
+            pnl_amount = trade['position_size'] * (entry - exit_px)
+
+        trade['pnl_amount'] = round(pnl_amount, 2)
+        trade['pnl_pct_of_balance'] = round((pnl_amount / self.account_balance) * 100, 2)
+
+        self.account_balance += pnl_amount
+        self.trade_history.append(trade)
+
+        logger.info(
+            f"🔒 Position Closed [{reason}]. PnL: ${trade['pnl_amount']:,.2f} "
+            f"({trade['pnl_pct_of_balance']}% of balance) | New Balance: ${self.account_balance:,.2f}"
+        )
+        self.active_trade = None
+
+    def manage_active_positions(self, current_price, current_time, high_price, low_price):
+        if not self.active_trade:
+            return
+
+        trade = self.active_trade
+        if current_time - trade['entry_time'] >= timedelta(hours=24):
+            self.close_position(current_price, current_time, "EXPIRED_24H")
+            return
+
+        if trade['bias'] == 'LONG':
+            if low_price <= trade['effective_sl']:
+                reason = "LIQUIDATED" if trade['liq_price'] >= trade['sl'] else "STOP_LOSS"
+                self.close_position(trade['effective_sl'], current_time, reason)
+            elif high_price >= trade['tp']:
+                self.close_position(trade['tp'], current_time, "TAKE_PROFIT")
+        elif trade['bias'] == 'SHORT':
+            if high_price >= trade['effective_sl']:
+                reason = "LIQUIDATED" if trade['liq_price'] <= trade['sl'] else "STOP_LOSS"
+                self.close_position(trade['effective_sl'], current_time, reason)
+            elif low_price <= trade['tp']:
+                self.close_position(trade['tp'], current_time, "TAKE_PROFIT")
+
+    def run_matrix_scanner(self):
+        if self.last_calibration_time is None or \
+           (datetime.now(timezone.utc) - self.last_calibration_time) >= self.recalibration_interval:
+            self.calibrate_anchor()
+
+        df_5m = self.fetch_market_data(interval="5m", limit=20)
+        if df_5m is None or df_5m.empty:
+            return
+
+        live_5m = df_5m.iloc[-1]
+        current_price = live_5m['close']
+        current_time = live_5m['timestamp']
+        current_atr = df_5m['atr'].iloc[-2]  # last closed candle's ATR
+
+        dynamic_wick_tolerance = (current_atr * 0.5) if not pd.isna(current_atr) else (current_price * 0.0015)
+
+        moon_deg, mars_deg, high_vol_window = self.calculate_celestial_coordinates(current_time)
+        grid = self.calculate_mw_vector_grid(moon_deg)
+
+        self.manage_active_positions(current_price, current_time, live_5m['high'], live_5m['low'])
+
+        logger.info(f"💵 ${current_price:,.2f} | 🌙 Moon: {moon_deg:.2f}° | 🔴 Mars: {mars_deg:.2f}°")
+        logger.info(f"🌌 Active Matrix: {grid['nakshatra_active']} (Lord: {grid['dasa_lord']}) | ATR Tolerance: ${dynamic_wick_tolerance:.2f}")
+
+        if self.active_trade:
+            return
+
+        dist_to_primary = abs(current_price - grid['primary_vector_support'])
+        dist_to_upper = abs(current_price - grid['upper_lattice_node'])
+
+        if high_vol_window:
+            risk_amount = self.account_balance * self.risk_per_trade
+
+            if dist_to_primary < dynamic_wick_tolerance:
+                sl_price = current_price - current_atr
+                position_size = risk_amount / abs(current_price - sl_price)
+
+                liq_price = current_price * (1 - (1 / self.leverage) + self.maintenance_margin_rate)
+                effective_sl = max(sl_price, liq_price)
+                if liq_price > sl_price:
+                    logger.warning(
+                        f"⚠️  Liquidation price ${liq_price:,.2f} is tighter than algo SL ${sl_price:,.2f} "
+                        f"at {self.leverage}x — exchange will force-close before your stop triggers."
+                    )
+
+                logger.warning("🚨 MW GRID COLLAPSE: LONG CONFLUENCE CONFIRMED.")
+                self.active_trade = {
+                    "entry_time": current_time, "bias": "LONG", "entry": current_price,
+                    "leverage": self.leverage, "position_size": position_size,
+                    "sl": sl_price, "liq_price": liq_price, "effective_sl": effective_sl,
+                    "tp": current_price + (current_atr * 2),
+                    "status": "OPEN"
+                }
+
+            elif dist_to_upper < dynamic_wick_tolerance:
+                sl_price = current_price + current_atr
+                position_size = risk_amount / abs(sl_price - current_price)
+
+                liq_price = current_price * (1 + (1 / self.leverage) - self.maintenance_margin_rate)
+                effective_sl = min(sl_price, liq_price)
+                if liq_price < sl_price:
+                    logger.warning(
+                        f"⚠️  Liquidation price ${liq_price:,.2f} is tighter than algo SL ${sl_price:,.2f} "
+                        f"at {self.leverage}x — exchange will force-close before your stop triggers."
+                    )
+
+                logger.warning("🚨 MW GRID COLLAPSE: SHORT CONFLUENCE CONFIRMED.")
+                self.active_trade = {
+                    "entry_time": current_time, "bias": "SHORT", "entry": current_price,
+                    "leverage": self.leverage, "position_size": position_size,
+                    "sl": sl_price, "liq_price": liq_price, "effective_sl": effective_sl,
+                    "tp": current_price - (current_atr * 2),
+                    "status": "OPEN"
+                }
+
+if __name__ == "__main__":
+    logger.info("Initializing Godzilla V4 (MW Advanced Vector Engine — corrected)...")
+    engine = GodzillaProductionEngine(symbol="BTCUSDT")
+
+    while True:
+        try:
+            engine.run_matrix_scanner()
+            time.sleep(15)
+        except KeyboardInterrupt:
+            logger.info("🛑 Shutting down engine cleanly.")
+            break
+        except Exception as e:
+            logger.error(f"Critical System Failure: {e}")
+            time.sleep(30)

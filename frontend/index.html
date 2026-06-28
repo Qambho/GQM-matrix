@@ -3,180 +3,283 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>GQM Matrix Platform</title>
-  <link rel="stylesheet" href="/static/styles.css" />
-  <link rel="stylesheet" href="/static/project2.css" />
+  <title>GQM Astro-Quant</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css?v=12" />
 </head>
 <body>
-  <nav class="category-bar">
-    <div class="category-brand">GQM Matrix Platform</div>
-    <div class="category-tabs">
-      <button type="button" class="category-btn active" data-project="1">Project 1</button>
-      <button type="button" class="category-btn" data-project="2">Project 2</button>
+  <div class="layout">
+  <aside class="sidebar" aria-label="Main navigation">
+    <div class="sidebar-brand">
+      <div class="brand-icon" aria-hidden="true">G</div>
+      <div>
+        <span class="brand-name">GQM Matrix</span>
+        <span class="brand-tag">Astro-Quant</span>
+      </div>
     </div>
-  </nav>
 
-  <div id="project-1" class="project-view active">
-    <div class="app">
-      <header class="header">
-        <div>
-          <p class="eyebrow">GQM Matrix</p>
-          <h1>JH Engine Blueprint Dashboard</h1>
-          <p class="subtitle">Live Binance Futures data + Astro-KP matrix levels</p>
-        </div>
-        <div class="header-actions">
-          <span id="statusBadge" class="badge badge-idle">Idle</span>
-          <button id="refreshBtn" class="btn btn-primary">Run Blueprint</button>
-        </div>
-      </header>
+    <nav class="sidebar-nav">
+      <button type="button" class="nav-item active" data-page="dashboard">
+        <span class="nav-icon" aria-hidden="true">◈</span>
+        Dashboard
+      </button>
+      <button type="button" class="nav-item" data-page="confluence">
+        <span class="nav-icon" aria-hidden="true">✦</span>
+        Astro Confluence
+      </button>
+      <button type="button" class="nav-item" data-page="matrix">
+        <span class="nav-icon" aria-hidden="true">⬡</span>
+        GQM Matrix
+      </button>
+      <button type="button" class="nav-item" data-page="feed">
+        <span class="nav-icon" aria-hidden="true">◎</span>
+        Live Feed
+      </button>
+    </nav>
 
-      <section class="controls card">
-        <div class="field">
-          <label for="symbolSelect">Asset</label>
-          <select id="symbolSelect">
-            <option value="BTCUSDT">BTCUSDT</option>
-            <option value="ETHUSDT">ETHUSDT</option>
-            <option value="BNBUSDT">BNBUSDT</option>
-            <option value="SOLUSDT">SOLUSDT</option>
-          </select>
+    <div class="sidebar-footer">
+      <div class="status-card">
+        <div class="status-row">
+          <span id="status-indicator" class="status-dot"></span>
+          <span class="status-label">Engine</span>
+          <span id="engine-status-text" class="status-value">CONNECTING</span>
         </div>
-        <div class="field">
-          <label for="leverageInput">Leverage</label>
-          <input id="leverageInput" type="number" min="1" max="125" value="50" />
+      </div>
+      <button type="button" id="audio-toggle" class="sidebar-btn">Radar Audio: MUTED</button>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="page-header">
+      <div>
+        <h1 id="page-title">Command Dashboard</h1>
+        <p id="page-subtitle">Real-time liquidation telemetry and momentum metrics</p>
+      </div>
+    </header>
+
+    <div class="page-content">
+      <!-- Dashboard -->
+      <section id="page-dashboard" class="page active">
+        <div class="stat-grid">
+          <article class="card stat-card">
+            <span class="card-label">Total Liquidations</span>
+            <span id="stat-total-liq" class="stat-value rose">$0.00</span>
+            <div class="stat-meta">
+              <span>Longs <strong id="stat-longs-wiped" class="rose">$0</strong></span>
+              <span>Shorts <strong id="stat-shorts-wiped" class="emerald">$0</strong></span>
+            </div>
+          </article>
+
+          <article class="card stat-card">
+            <span class="card-label">Dominant Side</span>
+            <span id="stat-ratio-text" class="stat-value muted">NEUTRAL</span>
+            <div class="ratio-bar">
+              <div id="bar-longs" class="ratio-long"></div>
+              <div id="bar-shorts" class="ratio-short"></div>
+            </div>
+          </article>
+
+          <article class="card stat-card">
+            <span class="card-label">Whale Capital</span>
+            <span id="stat-whale-vol" class="stat-value cyan">$0.00</span>
+            <span class="card-hint">Rolling network velocity</span>
+          </article>
+
+          <article id="gauge-card" class="card stat-card gauge-card">
+            <div class="card-row">
+              <span class="card-label">Godzilla Momentum</span>
+              <span id="gauge-score-badge" class="chip">STABLE</span>
+            </div>
+            <span id="stat-gauge-score" class="stat-value emerald">0%</span>
+            <div class="momentum-bar">
+              <div id="bar-gauge" class="momentum-fill"></div>
+            </div>
+          </article>
         </div>
-        <div class="field field-wide">
-          <label>Market API</label>
-          <div class="api-chip">Binance USD-M Futures · Public REST</div>
+
+        <div id="godzilla-cascade-banner" class="cascade-banner hidden">
+          <div id="cascade-alert-content"></div>
         </div>
       </section>
 
-      <main class="grid">
-        <section class="card">
-          <h2>Market Snapshot</h2>
-          <div id="marketPanel" class="panel muted">Run the blueprint to load live market data.</div>
-        </section>
+      <!-- Astro Confluence -->
+      <section id="page-confluence" class="page" hidden>
+        <div class="split-grid">
+          <article class="card">
+            <h2 class="section-title purple">Cosmic Ingestion</h2>
+            <label class="field-label" for="astro-dasa-input">Jagannatha Hora Dasas</label>
+            <textarea id="astro-dasa-input" class="field-textarea" rows="6" placeholder="Paste shorthand (Merc, Sat, Ju...)"></textarea>
+            <label class="field-label" for="astro-kp-input">KP System Data</label>
+            <textarea id="astro-kp-input" class="field-textarea" rows="6" placeholder="Paste KP layout (11th house Ju Ma Ve...)"></textarea>
+            <button type="button" id="analyzeBtn" class="btn btn-primary">Run Confluence Analysis</button>
+          </article>
 
-        <section class="card">
-          <h2>Astro-KP Context</h2>
-          <div id="astroPanel" class="panel muted">Antardasa and KP cusp data will appear here.</div>
-        </section>
-
-        <section class="card card-wide">
-          <h2>Matrix Blueprint Levels</h2>
-          <div id="matrixPanel" class="panel muted">Entry, target, and stop-loss levels will render here.</div>
-          <div class="chart-wrap">
-            <canvas id="levelChart" width="960" height="280"></canvas>
-          </div>
-        </section>
-
-        <section class="card card-wide">
-          <h2>Future Horizon Windows</h2>
-          <ul id="windowsList" class="windows-list muted">
-            <li>No data yet.</li>
-          </ul>
-        </section>
-      </main>
-    </div>
-  </div>
-
-  <div id="project-2" class="project-view" hidden>
-    <div class="project2-app">
-      <header class="project2-header">
-        <div style="display:flex;align-items:center;gap:12px;">
-          <div id="status-indicator" class="p2-status-dot pulse-light"></div>
-          <h1 class="project2-title">Godzilla Astro-Quant Deck</h1>
-        </div>
-        <div style="display:flex;align-items:center;gap:12px;">
-          <button id="audio-toggle" type="button" class="p2-btn-secondary">Radar Audio: MUTED</button>
-          <div class="p2-badge">Engine: <span id="engine-status-text" class="p2-amber">CONNECTING</span></div>
-        </div>
-      </header>
-
-      <main class="project2-main">
-        <div class="p2-grid-4">
-          <div class="p2-card">
-            <span class="p2-label">Total Liquidations</span>
-            <span id="stat-total-liq" class="p2-value p2-rose">$0.00</span>
-            <div class="p2-muted" style="font-size:0.7rem;margin-top:8px;display:flex;justify-content:space-between;">
-              <span>Longs: <span id="stat-longs-wiped" class="p2-rose">$0</span></span>
-              <span>Shorts: <span id="stat-shorts-wiped" class="p2-emerald">$0</span></span>
+          <article id="verdict-display-panel" class="card verdict-card">
+            <div class="card-row border-bottom">
+              <h2 class="section-title">Verdict Matrix</h2>
+              <span id="verdict-badge" class="chip">AWAITING DATA</span>
             </div>
-          </div>
-
-          <div class="p2-card">
-            <span class="p2-label">Dominant Liquidated Side</span>
-            <span id="stat-ratio-text" class="p2-value p2-muted">NEUTRAL</span>
-            <div class="p2-bar">
-              <div id="bar-longs" class="p2-bar-long" style="width:50%"></div>
-              <div id="bar-shorts" class="p2-bar-short" style="width:50%"></div>
+            <div class="verdict-grid">
+              <div>
+                <span class="field-label">Cosmic Alignment</span>
+                <span id="v-astro-state" class="verdict-text">Not synthesized</span>
+              </div>
+              <div>
+                <span class="field-label">Quant Agreement</span>
+                <span id="v-quant-state" class="verdict-text">Awaiting signal</span>
+              </div>
+              <div>
+                <span class="field-label">Systemic Bias</span>
+                <span id="v-bias-state" class="verdict-bias">NEUTRAL</span>
+              </div>
             </div>
-          </div>
-
-          <div class="p2-card">
-            <span class="p2-label">Whale Capital Ingested</span>
-            <span id="stat-whale-vol" class="p2-value p2-cyan">$0.00</span>
-          </div>
-
-          <div id="gauge-card" class="p2-card gauge-glow">
-            <div style="display:flex;justify-content:space-between;align-items:center;">
-              <span class="p2-label">Godzilla Momentum</span>
-              <span id="gauge-score-badge" class="p2-badge">STABLE COMPRESSION</span>
-            </div>
-            <span id="stat-gauge-score" class="p2-value p2-emerald">0%</span>
-            <div class="p2-bar" style="margin-top:10px;height:10px;">
-              <div id="bar-gauge" class="p2-bar-long" style="width:0%;background:linear-gradient(to right,#10b981,#fbbf24,#f43f5e);"></div>
-            </div>
-          </div>
-        </div>
-
-        <div class="p2-grid-3">
-          <div class="p2-card">
-            <h2 class="p2-label" style="color:#c084fc;margin-bottom:12px;">Cosmic Ingestion Matrix</h2>
-            <label class="p2-label" for="astro-dasa-input">Jagannatha Hora Dasas</label>
-            <textarea id="astro-dasa-input" class="p2-textarea" placeholder="Paste shorthand text (e.g., Merc, Sat, Ju...)"></textarea>
-            <label class="p2-label" for="astro-kp-input" style="margin-top:12px;">KP System Data</label>
-            <textarea id="astro-kp-input" class="p2-textarea" placeholder="Paste KP layout (e.g., 11th house Ju Ma Ve...)"></textarea>
-            <button id="analyzeBtn" type="button" class="p2-btn" style="margin-top:12px;">Execute Deep Confluence Analysis</button>
-          </div>
-
-          <div id="verdict-display-panel" class="p2-card">
-            <div style="display:flex;justify-content:space-between;border-bottom:1px solid #1e293b;padding-bottom:12px;margin-bottom:12px;">
-              <h2 class="p2-label" style="margin:0;color:#cbd5e1;">Confluence Verdict Matrix</h2>
-              <span id="verdict-badge" class="p2-badge">AWAITING DATA</span>
-            </div>
-            <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-bottom:12px;">
-              <div><span class="p2-label">Cosmic Alignment</span><span id="v-astro-state" class="p2-muted">Not Synthesized</span></div>
-              <div><span class="p2-label">Quant Agreement</span><span id="v-quant-state" class="p2-muted">Awaiting Signal</span></div>
-              <div><span class="p2-label">Systemic Bias</span><span id="v-bias-state" class="p2-value p2-muted">NEUTRAL BALANCE</span></div>
-            </div>
-            <div class="p2-card" style="background:#020617;">
-              <span class="p2-label" style="color:#c084fc;">Core Synthesis Narrative</span>
-              <p id="verdict-narrative-text" class="p2-muted" style="font-size:0.75rem;font-family:monospace;line-height:1.6;margin:0;">
+            <div class="narrative-box">
+              <span class="field-label purple">Synthesis Narrative</span>
+              <p id="verdict-narrative-text" class="narrative-text">
                 Paste Jagannatha Hora and KP data, then run analysis to compute quantitative overlap.
               </p>
             </div>
+          </article>
+        </div>
+      </section>
+
+      <!-- GQM Matrix -->
+      <section id="page-matrix" class="page" hidden>
+        <div class="matrix-toolbar card">
+          <div class="matrix-controls">
+            <div class="field-inline">
+              <label class="field-label" for="matrix-symbol">Symbol</label>
+              <select id="matrix-symbol" class="field-select">
+                <option value="BTCUSDT">BTCUSDT</option>
+                <option value="ETHUSDT">ETHUSDT</option>
+                <option value="BNBUSDT">BNBUSDT</option>
+                <option value="SOLUSDT">SOLUSDT</option>
+              </select>
+            </div>
+            <div class="field-inline">
+              <label class="field-label" for="matrix-ppd">Price / Degree</label>
+              <input id="matrix-ppd" class="field-input" type="number" min="1" step="1" value="200" />
+            </div>
+            <div class="field-inline">
+              <label class="field-label" for="matrix-leverage">Leverage</label>
+              <input id="matrix-leverage" class="field-input" type="number" min="1" max="125" value="50" />
+            </div>
+          </div>
+          <div class="matrix-toolbar-actions">
+            <span id="matrix-fetch-badge" class="chip">IDLE</span>
+            <button type="button" id="matrix-fetch-btn" class="btn btn-primary matrix-fetch-btn">
+              <span class="btn-spinner" aria-hidden="true"></span>
+              <span class="btn-label">Fetch</span>
+            </button>
           </div>
         </div>
 
-        <div id="godzilla-cascade-banner" class="p2-banner hidden">
-          <div id="cascade-alert-content"></div>
+        <div id="matrix-signal-banner" class="matrix-signal-banner hidden"></div>
+
+        <div class="stat-grid matrix-stat-grid">
+          <article class="card stat-card">
+            <span class="card-label">Spot Price</span>
+            <span id="mx-price" class="stat-value">—</span>
+            <span id="mx-atr" class="card-hint">ATR —</span>
+          </article>
+          <article class="card stat-card">
+            <span class="card-label">Moon Sidereal</span>
+            <span id="mx-moon" class="stat-value purple">—</span>
+            <span id="mx-aspect" class="card-hint">Aspect window —</span>
+          </article>
+          <article class="card stat-card stat-card-planets">
+            <span class="card-label">Mars · Mercury</span>
+            <div id="mx-planets" class="planet-stat-grid">
+              <div class="planet-stat">
+                <span class="planet-name rose">♂ Mars</span>
+                <span id="mx-mars" class="planet-degree">—</span>
+                <span id="mx-mars-sign" class="planet-sign">—</span>
+              </div>
+              <div class="planet-stat">
+                <span class="planet-name amber">☿ Mercury</span>
+                <span id="mx-mercury" class="planet-degree">—</span>
+                <span id="mx-mercury-sign" class="planet-sign">—</span>
+              </div>
+            </div>
+            <span class="card-hint">Sidereal longitude · Lahiri</span>
+          </article>
+          <article class="card stat-card stat-card-confluence">
+            <div class="confluence-head">
+              <span class="card-label">Longitude Confluence</span>
+              <button
+                type="button"
+                id="aspect-info-btn"
+                class="icon-btn"
+                title="View aspect reasoning"
+                aria-label="View aspect reasoning"
+                hidden
+              >
+                <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                  <circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="1.75"></circle>
+                  <path d="M12 11v5" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"></path>
+                  <circle cx="12" cy="8" r="1" fill="currentColor"></circle>
+                </svg>
+              </button>
+            </div>
+            <span id="mx-sum" class="stat-value amber">—</span>
+            <span id="mx-confluence-aspect" class="card-hint">Click Fetch for aspect geometry</span>
+          </article>
+          <article class="card stat-card">
+            <span class="card-label">Active Nakshatra</span>
+            <span id="mx-nakshatra" class="stat-value cyan">—</span>
+            <span id="mx-lord" class="card-hint">Lord —</span>
+          </article>
+          <article class="card stat-card">
+            <span class="card-label">Paper Balance</span>
+            <span id="mx-balance" class="stat-value emerald">—</span>
+            <span id="mx-risk" class="card-hint">Risk —</span>
+          </article>
         </div>
 
-        <section>
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-            <h2 style="margin:0;font-size:1.1rem;">Live Transaction & Liquidation Feed</h2>
-            <button id="clearFeedBtn" type="button" class="p2-btn-secondary">Clear Matrix Panel</button>
+        <article class="card matrix-chart-card">
+          <h2 class="section-title">MW Geometric Matrix</h2>
+          <p class="matrix-chart-caption">x → 360° zodiac · y → price · lattice grid refreshes every 2 hours</p>
+          <div class="matrix-chart-stack">
+            <canvas id="mx-lattice-chart" class="matrix-chart mw-matrix-canvas" width="640" height="360"></canvas>
+            <canvas id="mx-markers-canvas" class="matrix-chart mw-matrix-overlay" width="640" height="360"></canvas>
           </div>
-          <div id="feed-container" class="p2-feed">
-            <div class="p2-feed-empty">Awaiting connection to live backend streams...</div>
-          </div>
-        </section>
-      </main>
+          <div id="mx-chart-legend" class="matrix-chart-legend muted">Click Fetch to render the matrix.</div>
+          <div id="mx-lattice-panel" class="matrix-level-list muted">Click Fetch to load lattice nodes.</div>
+        </article>
+
+        <article class="card matrix-trades-card">
+          <h2 class="section-title">Active Position</h2>
+          <div id="mx-trade-panel" class="matrix-trade-panel muted">No open position.</div>
+          <h2 class="section-title" style="margin-top:20px;">Recent Trades</h2>
+          <div id="mx-history-panel" class="matrix-history muted">No closed trades yet.</div>
+        </article>
+      </section>
+
+      <!-- Live Feed -->
+      <section id="page-feed" class="page" hidden>
+        <div class="feed-header">
+          <h2 class="section-title">Transaction & Liquidation Feed</h2>
+          <button type="button" id="clearFeedBtn" class="btn btn-ghost">Clear panel</button>
+        </div>
+        <div id="feed-container" class="feed-list">
+          <div class="feed-empty">Awaiting connection to live backend streams...</div>
+        </div>
+      </section>
+    </div>
+  </div>
+  </div>
+
+  <div id="aspect-modal" class="modal" hidden>
+    <div class="modal-backdrop" data-close-modal></div>
+    <div class="modal-panel card" role="dialog" aria-modal="true" aria-labelledby="aspect-modal-title">
+      <button type="button" class="modal-close" data-close-modal aria-label="Close">&times;</button>
+      <h2 id="aspect-modal-title" class="section-title">Confluence Aspect Reasoning</h2>
+      <div id="aspect-modal-body" class="aspect-modal-body"></div>
     </div>
   </div>
 
-  <script src="/static/app.js"></script>
-  <script src="/static/project2.js"></script>
-  <script src="/static/shell.js"></script>
+  <script src="/app.js?v=21"></script>
 </body>
 </html>
