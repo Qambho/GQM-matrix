@@ -22,6 +22,7 @@ from gqm_matrix.schemas import HealthResponse, MarkerListResponse, MatrixScanRes
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
+DOCS_DIR = PROJECT_ROOT / "docs"
 _matrix_stream_ctx = MatrixStreamContext()
 
 
@@ -109,6 +110,19 @@ async def ws_matrix(
 @app.websocket("/ws/signals")
 async def ws_signals(websocket: WebSocket) -> None:
     await websocket_signals(websocket)
+
+
+@app.get("/api/docs")
+def serve_documentation() -> FileResponse:
+    doc_path = DOCS_DIR / "DOCUMENTATION.md"
+    if not doc_path.is_file():
+        raise HTTPException(status_code=404, detail="Documentation file not found.")
+    return FileResponse(doc_path, media_type="text/markdown; charset=utf-8")
+
+
+@app.get("/docs.js")
+def serve_docs_js() -> FileResponse:
+    return FileResponse(FRONTEND_DIR / "docs.js", media_type="application/javascript")
 
 
 @app.get("/styles.css")

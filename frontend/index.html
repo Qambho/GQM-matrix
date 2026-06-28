@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/styles.css?v=12" />
+  <link rel="stylesheet" href="/styles.css?v=13" />
 </head>
 <body>
   <div class="layout">
@@ -36,6 +36,10 @@
       <button type="button" class="nav-item" data-page="feed">
         <span class="nav-icon" aria-hidden="true">◎</span>
         Live Feed
+      </button>
+      <button type="button" class="nav-item" data-page="docs">
+        <span class="nav-icon" aria-hidden="true">▤</span>
+        Docs
       </button>
     </nav>
 
@@ -267,6 +271,23 @@
           <div class="feed-empty">Awaiting connection to live backend streams...</div>
         </div>
       </section>
+
+      <!-- Documentation -->
+      <section id="page-docs" class="page" hidden>
+        <div class="docs-layout">
+          <aside class="docs-toc card" aria-label="Documentation table of contents">
+            <h2 class="docs-toc-title">Contents</h2>
+            <nav id="docs-toc-nav" class="docs-toc-nav">
+              <span class="muted-block">Loading…</span>
+            </nav>
+          </aside>
+          <article class="card docs-article">
+            <div id="docs-content" class="docs-content">
+              <p class="muted-block">Loading documentation…</p>
+            </div>
+          </article>
+        </div>
+      </section>
     </div>
   </div>
   </div>
@@ -280,6 +301,8 @@
     </div>
   </div>
 
-  <script src="/app.js?v=21"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" crossorigin="anonymous" />
+  <script src="/app.js?v=23"></script>
+  <script src="/docs.js?v=2"></script>
 </body>
 </html>

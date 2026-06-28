@@ -17,6 +17,10 @@ const PAGE_META = {
     title: "GQM Matrix",
     subtitle: "Godzilla V4 MW vector lattice — Ashtottari Dasa price grid",
   },
+  docs: {
+    title: "Documentation",
+    subtitle: "Formulas, lattice math, and reversal radar reference",
+  },
 };
 
 const metrics = { totalLiqVolume: 0, longsLiquidated: 0, shortsLiquidated: 0, whaleVolume: 0 };
@@ -93,6 +97,10 @@ function switchPage(pageId) {
     stopMatrixFetch();
     disconnectMatrixWebSocket();
     stopMarkerAnimation();
+  }
+
+  if (pageId === "docs" && typeof loadDocumentationPage === "function") {
+    loadDocumentationPage();
   }
 }
 
