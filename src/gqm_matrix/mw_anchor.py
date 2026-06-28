@@ -11,6 +11,8 @@ import ephem
 import numpy as np
 import pandas as pd
 
+from gqm_matrix.lattice_band import lattice_extremes_from_primary
+
 logger = logging.getLogger("MWAnchor")
 
 # Fractal bars each side for confirmed 5m swings
@@ -172,6 +174,7 @@ def build_frozen_swing_anchor(
     ppd: float,
     ayanamsha: float,
     anchor_lookback_interval: str,
+    current_atr: float | None = None,
 ) -> FrozenSwingAnchor:
     swing_price, pivot_dt, pivot_type, lookback_high, lookback_low = identify_last_swing_pivot(
         df,
@@ -188,10 +191,10 @@ def build_frozen_swing_anchor(
 
     static_anchor = anchor_price - (moon_deg * ppd)
     primary = static_anchor + (moon_deg * ppd)
-    upper = primary + (13.33 * ppd)
-    lower = primary - (13.33 * ppd)
-    expansion = upper - primary
-    exit_upper = upper + expansion * 0.95
+    extremes = lattice_extremes_from_primary(primary, ppd, current_atr)
+    upper = extremes["upper_lattice_node"]
+    lower = extremes["lower_lattice_node"]
+    exit_upper = extremes["exit_upper_node"]
 
     logger.info(
         "Sun anchor from %s %s: price=%.2f @ %s | CMP=%.2f (not used) | ppd=%.2f",
@@ -222,20 +225,22 @@ def build_frozen_swing_anchor(
     )
 
 
-def build_mw_vertices(frozen: FrozenSwingAnchor, ppd: float | None = None) -> dict[str, Any]:
-    """Build MW vertices; optional ppd overrides frozen lattice prices for dynamic grid."""
+def build_mw_vertices(
+    frozen: FrozenSwingAnchor,
+    ppd: float | None = None,
+    current_atr: float | None = None,
+) -> dict[str, Any]:
+    """Build MW vertices; optional ppd/atr override frozen lattice prices for dynamic grid."""
     source = f"{frozen.anchor_lookback_interval}_last_swing"
     if ppd is not None and ppd != 0:
         moon = frozen.moon_degree_at_pivot
         static = frozen.anchor_price - (moon * ppd)
         primary = static + (moon * ppd)
-        upper = primary + (13.33 * ppd)
-        lower = primary - (13.33 * ppd)
-        expansion = upper - primary
-        exit_upper = upper + expansion * 0.95
-        entry_upper = upper
-        entry_lower = lower
-        exit_lower = lower
+        extremes = lattice_extremes_from_primary(primary, ppd, current_atr)
+        exit_upper = extremes["exit_upper_node"]
+        entry_upper = extremes["upper_lattice_node"]
+        entry_lower = extremes["lower_lattice_node"]
+        exit_lower = extremes["lower_lattice_node"]
     else:
         exit_upper = frozen.exit_upper_node
         entry_upper = frozen.upper_lattice_node

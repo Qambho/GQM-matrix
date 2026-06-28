@@ -569,16 +569,21 @@ function livePriceToZodiacDegree(livePrice) {
   return ((livePrice % 360) + 360) % 360;
 }
 
-function buildHarmonicNodes(primaryVector, upperLattice, lowerLattice) {
-  const upperSpan = upperLattice - primaryVector;
-  const lowerSpan = primaryVector - lowerLattice;
-  if (upperSpan <= 0 || lowerSpan <= 0) return [];
+function dynamicLatticeHalfBand(ppd, currentAtr) {
+  if (!ppd || ppd <= 0) return 0;
+  if (!currentAtr || currentAtr <= 0) return ppd * 6.665;
+  return currentAtr;
+}
+
+function buildHarmonicNodes(primaryVector, ppd, currentAtr) {
+  const halfBand = dynamicLatticeHalfBand(ppd, currentAtr);
+  if (halfBand <= 0) return [];
 
   return [
-    { price: primaryVector + upperSpan / 3, side: "upper", pct: 33 },
-    { price: primaryVector + (upperSpan * 2) / 3, side: "upper", pct: 66 },
-    { price: primaryVector - lowerSpan / 3, side: "lower", pct: 33 },
-    { price: primaryVector - (lowerSpan * 2) / 3, side: "lower", pct: 66 },
+    { price: primaryVector + halfBand / 3, side: "upper", pct: 33 },
+    { price: primaryVector + (halfBand * 2) / 3, side: "upper", pct: 66 },
+    { price: primaryVector - halfBand / 3, side: "lower", pct: 33 },
+    { price: primaryVector - (halfBand * 2) / 3, side: "lower", pct: 66 },
   ];
 }
 
@@ -619,9 +624,18 @@ function buildMwChartModel(data) {
   const mw = data.mw_structure || {};
   const verticesMeta = mw.vertices || {};
   const livePrice = data.market.live_price ?? data.market.price;
-  const anchorPrice = anchorBlock.sun_anchor_price ?? anchorBlock.anchor_price ?? null;
-  const staticAnchor = anchorBlock.static_anchor ?? data.grid.static_anchor;
   const ppd = data.grid.price_per_degree;
+  const moonAtPivot = anchorBlock.moon_degree_at_pivot ?? data.grid.moon_degree_at_pivot;
+  const swingAnchorPrice =
+    anchorBlock.swing_anchor_price ??
+    anchorBlock.sun_anchor_price ??
+    anchorBlock.anchor_price ??
+    data.grid.swing_anchor_price;
+  const anchorPrice = swingAnchorPrice ?? null;
+  const staticAnchor =
+    swingAnchorPrice != null && moonAtPivot != null
+      ? swingAnchorPrice - moonAtPivot * ppd
+      : data.grid.primary_vector_support - data.celestial.moon_degree * ppd;
 
   const A = verticesMeta.A || {
     label: "A",
@@ -915,9 +929,8 @@ function drawMWMatrixChart(data) {
 
   const anchorBlock = data.anchor || {};
   const primaryVector = anchorBlock.primary_vector_support ?? data.grid.primary_vector_support;
-  const upperLattice = anchorBlock.upper_lattice_node ?? data.grid.upper_lattice_node;
-  const lowerLattice = anchorBlock.lower_lattice_node ?? data.grid.lower_lattice_node;
-  const harmonicNodes = buildHarmonicNodes(primaryVector, upperLattice, lowerLattice);
+  const currentAtr = data.market.atr;
+  const harmonicNodes = buildHarmonicNodes(primaryVector, ppd, currentAtr);
   const spotDeg = livePriceToZodiacDegree(livePrice);
   const spotNearHarmonic = isNearHarmonicNode(livePrice, harmonicNodes);
   const activeCardinal = nearCardinalDegree(spotDeg);

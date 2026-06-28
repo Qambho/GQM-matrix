@@ -94,22 +94,28 @@ Lattice sensitivity adapts to micro-volatility:
 |--------|---------|
 | \(P\) | Live spot price (5m close) |
 | \(P_{\text{live}}\) | Same as \(P\) |
-| \(P_{\text{swing}}\) | 15m swing high/low pivot price (Sun anchor) |
+| \(P_{\text{swing}}\) | 5m swing high/low pivot price (Sun anchor) |
 | \(\lambda_{\Moon}\) | Sidereal Moon longitude at pivot (°) |
 | \(\lambda_{\Sun}\) | Sidereal Sun longitude at pivot (°) |
 | \(\lambda_{\Mars}\) | Sidereal Mars longitude at pivot (°) |
 | \(A\) | Static anchor (price intercept) |
 | \(\text{ppd}\) | Price per degree ($/°) |
 | \(\alpha\) | Lahiri ayanamsha (default **24.2°**) |
-| \(\Delta_{\text{nak}}\) | Nakshatra span = **13.33°** (= 360°/27) |
+| \(\Delta_{\text{nak}}\) | Nakshatra span = **13.33°** (= 360°/27) — used for sign mapping only |
 
-Default macro half-band (ppd = 200):
+Lattice **price** band is volatility-native (not fixed \$2,666):
 
 \[
-\Delta_{\text{nak}} \times \text{ppd} = 13.33 \times 200 = \$2{,}666
+\text{half\_band} = ATR_5 \quad\text{(or PPD fallback when ATR invalid)}
+\]
+\[
+P_{\text{upper}} = P_{\text{primary}} + \text{half\_band}, \quad
+P_{\text{lower}} = P_{\text{primary}} - \text{half\_band}
 \]
 
-This is the **macro lattice spacing** between Primary Vector and Upper/Lower lattice nodes.
+Band in zodiac degrees: \(\text{band\_degrees} = ATR_5 / \text{PPD}\)
+
+**Source:** `lattice_band.py`, `dynamic_ppd.py`
 
 ---
 
@@ -253,17 +259,13 @@ P_{\text{primary}} = A + \lambda_{\Moon} \times \text{ppd}
 ### Upper & Lower Lattice Nodes
 
 \[
-P_{\text{upper}} = P_{\text{primary}} + \Delta_{\text{nak}} \times \text{ppd}
+P_{\text{upper}} = P_{\text{primary}} + \text{half\_band}
 \]
 \[
-P_{\text{lower}} = P_{\text{primary}} - \Delta_{\text{nak}} \times \text{ppd}
+P_{\text{lower}} = P_{\text{primary}} - \text{half\_band}
 \]
 
-With default ppd = 200:
-
-\[
-P_{\text{upper}} - P_{\text{primary}} = P_{\text{primary}} - P_{\text{lower}} = \$2{,}666
-\]
+where \(\text{half\_band} = ATR_5\) derived from dynamic PPD context (see `lattice_band.py`).
 
 ### Exit Upper Node (MW vertex C)
 
@@ -369,30 +371,26 @@ Forms a **W** with troughs at W3/W1 and peak at W2.
 
 ## Harmonic Nodes & Reversal Alerts
 
-Harmonic levels subdivide the macro band between Primary Vector and lattice extremes **without altering** the macro \(2{,}666\) spacing or Sun anchor.
+Harmonic levels subdivide the **dynamic band** between Primary Vector and lattice extremes (33% / 66%), computed from live PPD + ATR — no fixed price spacing.
 
 ### Upper Harmonics (33% & 66%)
 
+Given \(\text{half\_band} = dynamicLatticeHalfBand(\text{PPD}, ATR_5)\):
+
 \[
-\Delta_{\uparrow} = P_{\text{upper}} - P_{\text{primary}}
+H_{\uparrow,1} = P_{\text{primary}} + \frac{\text{half\_band}}{3}
 \]
 \[
-H_{\uparrow,1} = P_{\text{primary}} + \frac{\Delta_{\uparrow}}{3}
-\]
-\[
-H_{\uparrow,2} = P_{\text{primary}} + \frac{2\Delta_{\uparrow}}{3}
+H_{\uparrow,2} = P_{\text{primary}} + \frac{2 \cdot \text{half\_band}}{3}
 \]
 
 ### Lower Harmonics (33% & 66%)
 
 \[
-\Delta_{\downarrow} = P_{\text{primary}} - P_{\text{lower}}
+H_{\downarrow,1} = P_{\text{primary}} - \frac{\text{half\_band}}{3}
 \]
 \[
-H_{\downarrow,1} = P_{\text{primary}} - \frac{\Delta_{\downarrow}}{3}
-\]
-\[
-H_{\downarrow,2} = P_{\text{primary}} - \frac{2\Delta_{\downarrow}}{3}
+H_{\downarrow,2} = P_{\text{primary}} - \frac{2 \cdot \text{half\_band}}{3}
 \]
 
 **Source:** `buildHarmonicNodes()` in `frontend/app.js`
@@ -584,7 +582,7 @@ Test \(\delta_{\text{comp}}\) against aspect orbs.
 | File | Responsibility |
 |------|----------------|
 | `src/gqm_matrix/godzilla_engine.py` | Main scanner, ATR, signals, grid API |
-| `src/gqm_matrix/mw_anchor.py` | 15m swing pivot, frozen anchor, MW vertices |
+| `src/gqm_matrix/mw_anchor.py` | 5m swing pivot, frozen anchor, MW vertices |
 | `src/gqm_matrix/celestial_aspects.py` | Confluence, aspects, cardinal harmonics |
 | `src/gqm_matrix/coordinates.py` | Generic (θ, price) coordinate generator |
 | `src/gqm_matrix/api.py` | REST endpoints |
@@ -598,7 +596,7 @@ Test \(\delta_{\text{comp}}\) against aspect orbs.
 ```json
 {
   "market": { "live_price", "atr", "atr_tolerance" },
-  "anchor": { "sun_anchor_price", "static_anchor", "primary_vector_support", "upper_lattice_node", "lower_lattice_node" },
+  "anchor": { "sun_anchor_price", "swing_anchor_price", "primary_vector_support", "upper_lattice_node", "lower_lattice_node" },
   "mw_structure": { "vertices": { "A", "B", "C", "D", "sun_crossing" }, "entry_degree", "exit_degree" },
   "grid": { "primary_vector_support", "upper_lattice_node", "lower_lattice_node", "price_per_degree" },
   "celestial": { "moon_degree", "mars_degree", "mercury_degree", "confluence" },

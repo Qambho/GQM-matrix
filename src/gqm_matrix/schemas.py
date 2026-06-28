@@ -34,6 +34,9 @@ class MatrixGridSnapshot(BaseModel):
     lower_lattice_node: float
     static_anchor: float | None = None
     price_per_degree: float
+    lattice_half_band: float | None = None
+    band_degrees: float | None = None
+    band_source: str | None = None
     last_calibration: str | None = None
     fallback_ppd: float | None = None
     dynamic_ppd: float | None = None

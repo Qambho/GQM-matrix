@@ -16,9 +16,12 @@ from gqm_matrix.dynamic_ppd import (
     DEFAULT_ATR_PERIOD,
     DEFAULT_MAX_PPD,
     DEFAULT_MIN_PPD,
-    DEFAULT_SCALING_FACTOR,
     MOON_VELOCITY_5M,
     calculate_dynamic_ppd,
+)
+from gqm_matrix.lattice_band import (
+    lattice_extremes_from_primary,
+    lattice_extremes_meta,
 )
 from gqm_matrix.mw_anchor import (
     FrozenSwingAnchor,
@@ -30,6 +33,10 @@ from gqm_matrix.mw_anchor import (
 logger = logging.getLogger("GodzillaEngine")
 
 BINANCE_FUTURES_KLINES = "https://fapi.binance.com/fapi/v1/klines"
+
+# Hard-coded grid compression for 5m scalping (not user-configurable).
+GRID_SCALING_FACTOR = 0.1
+ANCHOR_INTERVAL = "5m"
 
 
 class AshtottariVectorMap:
@@ -109,7 +116,6 @@ class GodzillaProductionEngine:
         symbol: str = "BTCUSDT",
         price_per_degree: float = 200.0,
         static_anchor: float = 16000.0,
-        scaling_factor: float = DEFAULT_SCALING_FACTOR,
         min_ppd: float = DEFAULT_MIN_PPD,
         max_ppd: float = DEFAULT_MAX_PPD,
         moon_velocity_5m: float = MOON_VELOCITY_5M,
@@ -121,7 +127,7 @@ class GodzillaProductionEngine:
         self.ayanamsha = 24.2
         self.vector_map = AshtottariVectorMap()
 
-        self.scaling_factor = scaling_factor
+        self.scaling_factor = GRID_SCALING_FACTOR
         self.min_ppd = min_ppd
         self.max_ppd = max_ppd
         self.moon_velocity_5m = moon_velocity_5m
@@ -135,7 +141,7 @@ class GodzillaProductionEngine:
 
         self.last_calibration_time: datetime | None = None
         self.last_anchor_candle_close: int | None = None
-        self.anchor_lookback_interval = "5m"
+        self.anchor_lookback_interval = ANCHOR_INTERVAL
         self.anchor_lookback_limit = 72
         self.frozen_anchor: FrozenSwingAnchor | None = None
 
@@ -223,15 +229,22 @@ class GodzillaProductionEngine:
             "confluence": confluence,
         }
 
-    def calculate_mw_vector_grid(self, moon_deg: float) -> dict[str, Any]:
+    def calculate_mw_vector_grid(
+        self,
+        moon_deg: float,
+        current_atr: float | None = None,
+    ) -> dict[str, Any]:
         nakshatra, lord = self.vector_map.get_nakshatra_and_lord(moon_deg)
         linear_floor = self.static_anchor + (moon_deg * self.ppd)
+        extremes = lattice_extremes_from_primary(linear_floor, self.ppd, current_atr)
         return {
             "nakshatra_active": nakshatra,
             "dasa_lord": lord,
-            "primary_vector_support": round(linear_floor, 2),
-            "upper_lattice_node": round(linear_floor + (13.33 * self.ppd), 2),
-            "lower_lattice_node": round(linear_floor - (13.33 * self.ppd), 2),
+            "primary_vector_support": round(extremes["primary_vector_support"], 2),
+            "upper_lattice_node": round(extremes["upper_lattice_node"], 2),
+            "lower_lattice_node": round(extremes["lower_lattice_node"], 2),
+            "lattice_half_band": round(extremes["lattice_half_band"], 2),
+            "band_degrees": round(extremes["band_degrees"], 4),
         }
 
     def update_dynamic_ppd(self, current_atr: float | None) -> float:
@@ -239,17 +252,22 @@ class GodzillaProductionEngine:
         ppd, meta = calculate_dynamic_ppd(
             current_atr,
             moon_velocity_5m=self.moon_velocity_5m,
-            scaling_factor=self.scaling_factor,
+            scaling_factor=GRID_SCALING_FACTOR,
             min_ppd=self.min_ppd,
             max_ppd=self.max_ppd,
             fallback_ppd=self.fallback_ppd,
         )
         self.ppd = ppd
         self.ppd_meta = meta
-        if self.frozen_anchor is not None:
-            moon = self.frozen_anchor.moon_degree_at_pivot
-            self.static_anchor = self.frozen_anchor.anchor_price - (moon * ppd)
+        self._sync_static_anchor_from_swing()
         return ppd
+
+    def _sync_static_anchor_from_swing(self) -> None:
+        """Keep lattice intercept aligned with 5m swing price and current PPD."""
+        if self.frozen_anchor is None:
+            return
+        moon = self.frozen_anchor.moon_degree_at_pivot
+        self.static_anchor = self.frozen_anchor.anchor_price - (moon * self.ppd)
 
     def _completed_candle_close_time(self, df: pd.DataFrame) -> int | None:
         """Binance close_time (ms) of the last fully closed candle."""
@@ -266,7 +284,11 @@ class GodzillaProductionEngine:
             return False
         return candle_close != self.last_anchor_candle_close
 
-    def calibrate_anchor(self, df: pd.DataFrame | None = None) -> None:
+    def calibrate_anchor(
+        self,
+        df: pd.DataFrame | None = None,
+        current_atr: float | None = None,
+    ) -> None:
         if df is None:
             df = self.fetch_market_data(
                 interval=self.anchor_lookback_interval,
@@ -276,13 +298,19 @@ class GodzillaProductionEngine:
             logger.warning("Anchor calibration skipped: no market data.")
             return
 
+        if current_atr is None and "atr" in df.columns and len(df) >= 2:
+            atr_val = df["atr"].iloc[-2]
+            if not pd.isna(atr_val):
+                current_atr = float(atr_val)
+
         self.frozen_anchor = build_frozen_swing_anchor(
             df,
             ppd=self.ppd,
             ayanamsha=self.ayanamsha,
             anchor_lookback_interval=self.anchor_lookback_interval,
+            current_atr=current_atr,
         )
-        self.static_anchor = self.frozen_anchor.static_anchor
+        self._sync_static_anchor_from_swing()
         self.last_calibration_time = datetime.now(timezone.utc)
         self.last_anchor_candle_close = self._completed_candle_close_time(df)
         logger.info(
@@ -381,9 +409,9 @@ class GodzillaProductionEngine:
                 interval=self.anchor_lookback_interval,
                 limit=self.anchor_lookback_limit,
             )
-            self.calibrate_anchor(anchor_df if anchor_df is not None else df_5m)
+            self.calibrate_anchor(anchor_df if anchor_df is not None else df_5m, current_atr)
         elif self.frozen_anchor is None:
-            self.calibrate_anchor(df_5m)
+            self.calibrate_anchor(df_5m, current_atr)
 
         dynamic_wick_tolerance = (
             float(current_atr * 0.5) if not pd.isna(current_atr) else live_price * 0.0015
@@ -395,7 +423,7 @@ class GodzillaProductionEngine:
         mercury_deg = celestial["mercury_degree"]
         high_vol_window = celestial["high_volume_aspect"]
         confluence = celestial["confluence"]
-        grid = self.calculate_mw_vector_grid(moon_deg)
+        grid = self.calculate_mw_vector_grid(moon_deg, current_atr)
 
         frozen = self.frozen_anchor
         anchor_payload: dict[str, Any] | None = None
@@ -403,12 +431,16 @@ class GodzillaProductionEngine:
         anchor_warnings: list[str] = []
 
         if frozen is not None:
+            anchor_dict = frozen.to_dict()
+            anchor_dict.pop("static_anchor", None)
             anchor_payload = {
-                **frozen.to_dict(),
+                **anchor_dict,
                 "live_price": round(live_price, 2),
+                "swing_anchor_price": round(frozen.sun_anchor_price, 2),
+                "anchor_interval": ANCHOR_INTERVAL,
             }
             mw_structure = {
-                "vertices": build_mw_vertices(frozen, ppd=self.ppd),
+                "vertices": build_mw_vertices(frozen, ppd=self.ppd, current_atr=current_atr),
                 "entry_degree": frozen.moon_degree_at_pivot,
                 "exit_degree": frozen.sun_degree_at_pivot,
             }
@@ -507,7 +539,7 @@ class GodzillaProductionEngine:
                 "fallback_ppd": self.fallback_ppd,
                 "dynamic_ppd": self.ppd,
                 "ppd_source": self.ppd_meta.get("source", "fallback"),
-                "scaling_factor": self.scaling_factor,
+                "scaling_factor": GRID_SCALING_FACTOR,
                 "ppd_meta": self.ppd_meta,
                 "atr_period": self.atr_period,
                 "swing_anchor_price": (
@@ -522,6 +554,7 @@ class GodzillaProductionEngine:
                 ),
                 "last_anchor_candle_close": self.last_anchor_candle_close,
                 "anchor_interval": self.anchor_lookback_interval,
+                **lattice_extremes_meta(self.ppd, current_atr),
             },
             "distances": {
                 "to_primary": round(dist_to_primary, 2),
