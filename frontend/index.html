@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/styles.css?v=13" />
+  <link rel="stylesheet" href="/styles.css?v=14" />
 </head>
 <body>
   <div class="layout">
@@ -276,15 +276,29 @@
       <section id="page-docs" class="page" hidden>
         <div class="docs-layout">
           <aside class="docs-toc card" aria-label="Documentation table of contents">
-            <h2 class="docs-toc-title">Contents</h2>
+            <div class="docs-toc-head">
+              <h2 class="docs-toc-title">Contents</h2>
+              <p class="docs-toc-hint">Select a topic</p>
+            </div>
             <nav id="docs-toc-nav" class="docs-toc-nav">
               <span class="muted-block">Loading…</span>
             </nav>
           </aside>
           <article class="card docs-article">
+            <header class="docs-section-header">
+              <div class="docs-section-meta">
+                <span id="docs-section-badge" class="docs-badge">Guide</span>
+                <span id="docs-section-index" class="docs-section-index">1 / 1</span>
+              </div>
+              <h2 id="docs-section-title" class="docs-section-title">Overview</h2>
+            </header>
             <div id="docs-content" class="docs-content">
               <p class="muted-block">Loading documentation…</p>
             </div>
+            <footer class="docs-section-footer">
+              <button type="button" id="docs-prev-btn" class="btn btn-ghost docs-nav-btn" disabled>← Previous</button>
+              <button type="button" id="docs-next-btn" class="btn btn-ghost docs-nav-btn">Next →</button>
+            </footer>
           </article>
         </div>
       </section>
@@ -303,6 +317,6 @@
 
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" crossorigin="anonymous" />
   <script src="/app.js?v=23"></script>
-  <script src="/docs.js?v=2"></script>
+  <script src="/docs.js?v=3"></script>
 </body>
 </html>

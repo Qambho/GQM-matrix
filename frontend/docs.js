@@ -1,10 +1,15 @@
-/** GQM Matrix — documentation page renderer */
+/** GQM Matrix — section-based documentation viewer */
 
-let docsLoaded = false;
-let docsLoading = false;
+const docsState = {
+  loaded: false,
+  loading: false,
+  activeId: "overview",
+  overview: null,
+  sections: [],
+};
 
 function slugifyHeading(text) {
-  return text
+  return stripInline(text)
     .toLowerCase()
     .replace(/[^\w\s-]/g, "")
     .replace(/\s+/g, "-")
@@ -12,116 +17,336 @@ function slugifyHeading(text) {
     .trim();
 }
 
-function stripMarkdownInline(text) {
+function stripInline(text) {
   return text
     .replace(/\*\*(.+?)\*\*/g, "$1")
     .replace(/`([^`]+)`/g, "$1")
     .replace(/\[(.+?)\]\(.+?\)/g, "$1");
 }
 
-function extractDocHeadings(markdown) {
-  const headings = [];
-  for (const line of markdown.split("\n")) {
-    const match = /^(#{2,3})\s+(.+)$/.exec(line.trim());
-    if (!match) continue;
-    const level = match[1].length;
-    const text = stripMarkdownInline(match[2].trim());
-    if (text.toLowerCase() === "table of contents") continue;
-    headings.push({ level, text, id: slugifyHeading(text) });
-  }
-  return headings;
+function escapeHtml(text) {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
-function buildDocsToc(headings) {
+function inlineMarkdown(text) {
+  let out = escapeHtml(text);
+  out = out.replace(/`([^`]+)`/g, "<code>$1</code>");
+  out = out.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  out = out.replace(/\[(.+?)\]\((.+?)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  return out;
+}
+
+function parseDocumentation(markdown) {
+  const lines = markdown.split("\n");
+  const overviewLines = [];
+  const sections = [];
+  let inToc = false;
+  let current = null;
+
+  for (const line of lines) {
+    if (/^##\s+Table of Contents/i.test(line)) {
+      inToc = true;
+      continue;
+    }
+    if (inToc) {
+      if (/^---\s*$/.test(line.trim())) inToc = false;
+      continue;
+    }
+
+    const h2 = /^##\s+(.+)$/.exec(line);
+    if (h2) {
+      if (current) sections.push(current);
+      const title = stripInline(h2[1].trim());
+      current = { id: slugifyHeading(title), title, lines: [] };
+      continue;
+    }
+
+    if (current) current.lines.push(line);
+    else overviewLines.push(line);
+  }
+  if (current) sections.push(current);
+
+  const overviewMarkdown = overviewLines.join("\n").trim();
+  const overviewTitle =
+    /^#\s+(.+)$/m.exec(overviewMarkdown)?.[1]?.replace(/\*\*/g, "") || "Overview";
+
+  return {
+    overview: {
+      id: "overview",
+      title: stripInline(overviewTitle),
+      markdown: overviewMarkdown,
+    },
+    sections: sections.map((s) => ({
+      id: s.id,
+      title: s.title,
+      markdown: s.lines.join("\n").trim(),
+    })),
+  };
+}
+
+function mdToHtml(markdown) {
+  const lines = markdown.split("\n");
+  const parts = [];
+  let paragraph = [];
+  let listItems = [];
+  let listOrdered = false;
+  let inCode = false;
+  let codeLines = [];
+  let tableRows = [];
+
+  const flushParagraph = () => {
+    if (!paragraph.length) return;
+    parts.push(`<p>${inlineMarkdown(paragraph.join(" "))}</p>`);
+    paragraph = [];
+  };
+
+  const flushList = () => {
+    if (!listItems.length) return;
+    const tag = listOrdered ? "ol" : "ul";
+    parts.push(`<${tag}>${listItems.map((li) => `<li>${inlineMarkdown(li)}</li>`).join("")}</${tag}>`);
+    listItems = [];
+    listOrdered = false;
+  };
+
+  const flushTable = () => {
+    if (tableRows.length < 2) {
+      tableRows = [];
+      return;
+    }
+    const [header, , ...body] = tableRows;
+    const headerCells = header.split("|").filter(Boolean).map((c) => c.trim());
+    const bodyHtml = body
+      .map((row) => {
+        const cells = row.split("|").filter(Boolean).map((c) => `<td>${inlineMarkdown(c.trim())}</td>`);
+        return `<tr>${cells.join("")}</tr>`;
+      })
+      .join("");
+    const headHtml = headerCells.map((c) => `<th>${inlineMarkdown(c)}</th>`).join("");
+    parts.push(`<table><thead><tr>${headHtml}</tr></thead><tbody>${bodyHtml}</tbody></table>`);
+    tableRows = [];
+  };
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+
+    if (trimmed.startsWith("```")) {
+      flushParagraph();
+      flushList();
+      flushTable();
+      if (!inCode) {
+        inCode = true;
+        codeLines = [];
+      } else {
+        parts.push(`<pre><code>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
+        inCode = false;
+      }
+      continue;
+    }
+
+    if (inCode) {
+      codeLines.push(line);
+      continue;
+    }
+
+    if (trimmed.startsWith("|")) {
+      flushParagraph();
+      flushList();
+      tableRows.push(trimmed);
+      continue;
+    }
+    flushTable();
+
+    if (/^---+$/.test(trimmed)) {
+      flushParagraph();
+      flushList();
+      parts.push("<hr />");
+      continue;
+    }
+
+    const h3 = /^###\s+(.+)$/.exec(line);
+    if (h3) {
+      flushParagraph();
+      flushList();
+      const id = slugifyHeading(h3[1]);
+      parts.push(`<h3 id="${id}">${inlineMarkdown(h3[1])}</h3>`);
+      continue;
+    }
+
+    const h2 = /^##\s+(.+)$/.exec(line);
+    if (h2) {
+      flushParagraph();
+      flushList();
+      parts.push(`<h2>${inlineMarkdown(h2[1])}</h2>`);
+      continue;
+    }
+
+    const h1 = /^#\s+(.+)$/.exec(line);
+    if (h1) {
+      flushParagraph();
+      flushList();
+      parts.push(`<h1>${inlineMarkdown(h1[1])}</h1>`);
+      continue;
+    }
+
+    const ol = /^\d+\.\s+(.+)$/.exec(trimmed);
+    if (ol) {
+      flushParagraph();
+      if (!listOrdered && listItems.length) flushList();
+      listOrdered = true;
+      listItems.push(ol[1]);
+      continue;
+    }
+
+    const ul = /^[-*]\s+(.+)$/.exec(trimmed);
+    if (ul) {
+      flushParagraph();
+      if (listOrdered && listItems.length) flushList();
+      listOrdered = false;
+      listItems.push(ul[1]);
+      continue;
+    }
+
+    if (!trimmed) {
+      flushParagraph();
+      flushList();
+      continue;
+    }
+
+    flushList();
+    paragraph.push(trimmed);
+  }
+
+  flushParagraph();
+  flushList();
+  flushTable();
+  if (inCode && codeLines.length) {
+    parts.push(`<pre><code>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
+  }
+
+  return parts.join("\n");
+}
+
+function allDocSections() {
+  return [docsState.overview, ...docsState.sections].filter(Boolean);
+}
+
+function getSectionById(id) {
+  return allDocSections().find((s) => s.id === id) || docsState.overview;
+}
+
+function buildDocsToc() {
   const nav = document.getElementById("docs-toc-nav");
   if (!nav) return;
 
-  if (!headings.length) {
-    nav.innerHTML = `<span class="muted-block">No sections found.</span>`;
-    return;
-  }
-
-  nav.innerHTML = headings
-    .map((h) => {
-      const cls = h.level === 3 ? "docs-toc-link docs-toc-link-sub" : "docs-toc-link";
-      return `<a class="${cls}" href="#${h.id}" data-doc-anchor="${h.id}">${h.text}</a>`;
-    })
+  const items = allDocSections();
+  nav.innerHTML = items
+    .map(
+      (s) =>
+        `<button type="button" class="docs-toc-link${s.id === docsState.activeId ? " active" : ""}" data-doc-section="${s.id}">${s.title}</button>`,
+    )
     .join("");
 
-  nav.querySelectorAll("[data-doc-anchor]").forEach((link) => {
-    link.addEventListener("click", (event) => {
-      event.preventDefault();
-      document.getElementById(link.dataset.docAnchor)?.scrollIntoView({ behavior: "smooth", block: "start" });
-      history.replaceState(null, "", `#${link.dataset.docAnchor}`);
-    });
+  nav.querySelectorAll("[data-doc-section]").forEach((btn) => {
+    btn.addEventListener("click", () => showDocSection(btn.dataset.docSection));
   });
 }
 
-function loadScriptOnce(src) {
-  if (document.querySelector(`script[src="${src}"]`)) return Promise.resolve();
-  return new Promise((resolve, reject) => {
+function updateDocHeader(section) {
+  const titleEl = document.getElementById("docs-section-title");
+  const badgeEl = document.getElementById("docs-section-badge");
+  const indexEl = document.getElementById("docs-section-index");
+  const items = allDocSections();
+  const idx = items.findIndex((s) => s.id === section.id);
+
+  if (titleEl) titleEl.textContent = section.title;
+  if (badgeEl) badgeEl.textContent = section.id === "overview" ? "Guide" : "Formula Reference";
+  if (indexEl) indexEl.textContent = `${idx + 1} / ${items.length}`;
+}
+
+function updateDocNavButtons() {
+  const items = allDocSections();
+  const idx = items.findIndex((s) => s.id === docsState.activeId);
+  const prevBtn = document.getElementById("docs-prev-btn");
+  const nextBtn = document.getElementById("docs-next-btn");
+
+  if (prevBtn) {
+    prevBtn.disabled = idx <= 0;
+    prevBtn.onclick = () => idx > 0 && showDocSection(items[idx - 1].id);
+  }
+  if (nextBtn) {
+    nextBtn.disabled = idx >= items.length - 1;
+    nextBtn.onclick = () => idx < items.length - 1 && showDocSection(items[idx + 1].id);
+  }
+}
+
+function typesetDocsMath(root) {
+  if (typeof renderMathInElement !== "function") return;
+  renderMathInElement(root, {
+    delimiters: [
+      { left: "$$", right: "$$", display: true },
+      { left: "\\[", right: "\\]", display: true },
+      { left: "\\(", right: "\\)", display: false },
+    ],
+    throwOnError: false,
+    strict: "ignore",
+  });
+}
+
+function showDocSection(id) {
+  const section = getSectionById(id);
+  if (!section) return;
+
+  docsState.activeId = section.id;
+  const contentEl = document.getElementById("docs-content");
+  if (!contentEl) return;
+
+  contentEl.innerHTML = mdToHtml(section.markdown);
+  typesetDocsMath(contentEl);
+
+  updateDocHeader(section);
+  buildDocsToc();
+  updateDocNavButtons();
+
+  const pageContent = document.querySelector(".page-content");
+  if (pageContent) pageContent.scrollTop = 0;
+}
+
+async function loadScriptOnce(src) {
+  if (document.querySelector(`script[src="${src}"]`)) return;
+  await new Promise((resolve, reject) => {
     const script = document.createElement("script");
     script.src = src;
     script.crossOrigin = "anonymous";
-    script.onload = () => resolve();
-    script.onerror = () => reject(new Error(`Failed to load ${src}`));
+    script.onload = resolve;
+    script.onerror = reject;
     document.head.appendChild(script);
   });
 }
 
-async function ensureDocsLibraries() {
-  await loadScriptOnce("https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js");
+async function ensureKatex() {
   try {
     await loadScriptOnce("https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js");
     await loadScriptOnce("https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js");
   } catch {
-    /* math rendering optional */
-  }
-}
-
-function renderMarkdown(html, markdown) {
-  if (window.marked?.parse) {
-    try {
-      marked.use({
-        renderer: {
-          heading({ tokens, depth }) {
-            const text = this.parser.parseInline(tokens);
-            const plain = stripMarkdownInline(text.replace(/<[^>]+>/g, ""));
-            return `<h${depth} id="${slugifyHeading(plain)}">${text}</h${depth}>`;
-          },
-        },
-        gfm: true,
-      });
-      return marked.parse(markdown);
-    } catch {
-      /* fall through */
-    }
-  }
-  return `<pre class="docs-fallback">${markdown.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</pre>`;
-}
-
-function typesetDocsMath(root) {
-  if (typeof renderMathInElement === "function") {
-    renderMathInElement(root, {
-      delimiters: [
-        { left: "$$", right: "$$", display: true },
-        { left: "\\[", right: "\\]", display: true },
-        { left: "\\(", right: "\\)", display: false },
-      ],
-      throwOnError: false,
-      strict: "ignore",
-    });
+    /* math optional */
   }
 }
 
 async function loadDocumentationPage() {
-  if (docsLoaded || docsLoading) return;
-  docsLoading = true;
+  if (docsState.loaded || docsState.loading) {
+    if (docsState.loaded) showDocSection(docsState.activeId);
+    return;
+  }
+  docsState.loading = true;
 
   const contentEl = document.getElementById("docs-content");
   const tocNav = document.getElementById("docs-toc-nav");
   if (!contentEl) {
-    docsLoading = false;
+    docsState.loading = false;
     return;
   }
 
@@ -132,24 +357,24 @@ async function loadDocumentationPage() {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const markdown = await response.text();
 
-    await ensureDocsLibraries();
+    await ensureKatex();
 
-    const headings = extractDocHeadings(markdown);
-    buildDocsToc(headings);
+    const parsed = parseDocumentation(markdown);
+    docsState.overview = parsed.overview;
+    docsState.sections = parsed.sections;
+    docsState.loaded = true;
 
-    contentEl.innerHTML = renderMarkdown(contentEl.innerHTML, markdown);
-    typesetDocsMath(contentEl);
-    docsLoaded = true;
+    showDocSection("overview");
   } catch (error) {
     contentEl.innerHTML = `<div class="docs-error">
       <p class="rose">Failed to load documentation.</p>
-      <p class="muted-block">${error.message}</p>
-      <p class="muted-block">Restart the server so <code>/api/docs</code> is available, then refresh.</p>
+      <p class="muted-block">${escapeHtml(error.message)}</p>
     </div>`;
     if (tocNav) tocNav.innerHTML = `<span class="muted-block">Unavailable</span>`;
   } finally {
-    docsLoading = false;
+    docsState.loading = false;
   }
 }
 
 window.loadDocumentationPage = loadDocumentationPage;
+window.showDocSection = showDocSection;
