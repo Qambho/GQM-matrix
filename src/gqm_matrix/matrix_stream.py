@@ -1,4 +1,4 @@
-"""Background matrix scanner and real-time signal broadcasting."""
+"""Background matrix live stream and real-time signal broadcasting."""
 
 from __future__ import annotations
 
@@ -15,8 +15,6 @@ from gqm_matrix.markers import get_marker_manager
 
 logger = logging.getLogger("MatrixStream")
 
-SCAN_INTERVAL_SECONDS = 1
-
 
 class MatrixConnectionManager:
     def __init__(self) -> None:
@@ -31,12 +29,17 @@ class MatrixConnectionManager:
             self.active_connections.remove(websocket)
 
     async def broadcast(self, payload: dict[str, Any]) -> None:
+        if not self.active_connections:
+            return
         message = json.dumps(payload)
+        dead: list[WebSocket] = []
         for connection in list(self.active_connections):
             try:
                 await connection.send_text(message)
             except Exception:
-                self.disconnect(connection)
+                dead.append(connection)
+        for connection in dead:
+            self.disconnect(connection)
 
 
 matrix_manager = MatrixConnectionManager()
@@ -51,64 +54,44 @@ class MatrixStreamConfig:
 
 @dataclass
 class MatrixStreamContext:
-    scanner_task: asyncio.Task | None = None
+    stream_task: asyncio.Task | None = None
     config: MatrixStreamConfig | None = None
 
 
-async def _scan_once(
+async def _live_stream_loop(
     symbol: str,
     price_per_degree: float,
     leverage: int,
-    on_event: Callable[[dict[str, Any]], Awaitable[None]],
 ) -> None:
-    try:
-        engine = get_engine(
-            symbol=symbol,
-            price_per_degree=price_per_degree,
-            leverage=leverage,
-        )
-        report = engine.run_matrix_scanner()
-        marker_mgr = get_marker_manager(symbol)
+    engine = get_engine(
+        symbol=symbol,
+        price_per_degree=price_per_degree,
+        leverage=leverage,
+    )
+    marker_mgr = get_marker_manager(symbol)
+    last_signal_status: str | None = None
 
-        signal_status = report.get("signal", {}).get("status", "SCANNING")
-        new_marker = marker_mgr.create_from_scan(report, signal_status)
+    async def on_frame(payload: dict[str, Any]) -> None:
+        nonlocal last_signal_status
+        await matrix_manager.broadcast(payload)
 
-        await on_event(
-            {
-                "event": "matrix_frame",
-                "data": report,
-            }
-        )
-
+        if payload.get("event") != "matrix_frame":
+            return
+        data = payload.get("data") or {}
+        signal_status = data.get("signal", {}).get("status", "SCANNING")
+        if signal_status == last_signal_status:
+            return
+        last_signal_status = signal_status
+        new_marker = marker_mgr.create_from_scan(data, signal_status)
         if new_marker:
-            await on_event(
+            await matrix_manager.broadcast(
                 {
                     "event": "matrix_signal",
                     "marker": new_marker.to_dict(),
                 }
             )
-    except Exception as exc:
-        logger.error("Matrix scan failed for %s: %s", symbol, exc)
-        await on_event(
-            {
-                "event": "matrix_error",
-                "message": str(exc),
-                "symbol": symbol,
-            }
-        )
 
-
-async def _scanner_loop(
-    symbol: str,
-    price_per_degree: float,
-    leverage: int,
-) -> None:
-    async def emit(payload: dict[str, Any]) -> None:
-        await matrix_manager.broadcast(payload)
-
-    while True:
-        await _scan_once(symbol, price_per_degree, leverage, emit)
-        await asyncio.sleep(SCAN_INTERVAL_SECONDS)
+    await engine.run_live_stream(on_frame)
 
 
 async def ensure_matrix_stream(
@@ -117,24 +100,23 @@ async def ensure_matrix_stream(
     price_per_degree: float = 200.0,
     leverage: int = 50,
 ) -> None:
-    """Keep a single background scanner aligned with the active symbol/settings."""
     sym = symbol.upper()
     desired = MatrixStreamConfig(sym, float(price_per_degree), int(leverage))
     if (
         ctx.config == desired
-        and ctx.scanner_task is not None
-        and not ctx.scanner_task.done()
+        and ctx.stream_task is not None
+        and not ctx.stream_task.done()
     ):
         return
 
     await stop_matrix_stream(ctx)
     ctx.config = desired
-    ctx.scanner_task = asyncio.create_task(
-        _scanner_loop(sym, desired.price_per_degree, desired.leverage),
-        name=f"matrix-scanner-{sym}",
+    ctx.stream_task = asyncio.create_task(
+        _live_stream_loop(sym, desired.price_per_degree, desired.leverage),
+        name=f"matrix-live-{sym}",
     )
     logger.info(
-        "Matrix scanner started for %s (ppd=%s, leverage=%s)",
+        "Matrix live stream started for %s (ppd=%s, leverage=%s)",
         sym,
         desired.price_per_degree,
         desired.leverage,
@@ -151,13 +133,13 @@ async def start_matrix_stream(
 
 
 async def stop_matrix_stream(ctx: MatrixStreamContext) -> None:
-    if ctx.scanner_task is not None:
-        ctx.scanner_task.cancel()
+    if ctx.stream_task is not None:
+        ctx.stream_task.cancel()
         try:
-            await ctx.scanner_task
+            await ctx.stream_task
         except asyncio.CancelledError:
             pass
-        ctx.scanner_task = None
+        ctx.stream_task = None
     ctx.config = None
 
 
@@ -168,24 +150,42 @@ async def websocket_matrix(
     leverage: int = 50,
     stream_ctx: MatrixStreamContext | None = None,
 ) -> None:
-    await matrix_manager.connect(websocket)
     sym = symbol.upper()
+    ppd = float(price_per_degree)
+    lev = int(leverage)
+
+    if stream_ctx is not None:
+        await ensure_matrix_stream(stream_ctx, sym, ppd, lev)
+
+    try:
+        await matrix_manager.connect(websocket)
+    except Exception:
+        logger.exception("Failed to accept matrix WebSocket for %s", sym)
+        return
 
     marker_mgr = get_marker_manager(sym)
-    await websocket.send_text(
-        json.dumps(
-            {
-                "event": "matrix_history",
-                "markers": marker_mgr.list_dicts(),
-                "symbol": sym,
-            }
+    try:
+        await websocket.send_text(
+            json.dumps(
+                {
+                    "event": "matrix_history",
+                    "markers": marker_mgr.list_dicts(),
+                    "symbol": sym,
+                }
+            )
         )
-    )
+    except Exception:
+        matrix_manager.disconnect(websocket)
+        return
 
     try:
         while True:
             await websocket.receive_text()
     except WebSocketDisconnect:
+        logger.debug("Matrix WebSocket disconnected: %s", sym)
+    except Exception as exc:
+        logger.warning("Matrix WebSocket error (%s): %s", sym, exc)
+    finally:
         matrix_manager.disconnect(websocket)
 
 
@@ -194,18 +194,23 @@ async def trigger_manual_scan(
     price_per_degree: float,
     leverage: int,
 ) -> dict[str, Any]:
-    """Run a single scan and broadcast results to connected clients."""
+    """Legacy one-shot scan — prefer /ws/matrix live stream."""
+    engine = get_engine(
+        symbol=symbol,
+        price_per_degree=price_per_degree,
+        leverage=leverage,
+    )
+    report = engine.run_matrix_scanner()
+    marker_mgr = get_marker_manager(symbol)
+    signal_status = report.get("signal", {}).get("status", "SCANNING")
+    new_marker = marker_mgr.create_from_scan(report, signal_status)
 
-    events: list[dict[str, Any]] = []
+    frame_event = {"event": "matrix_frame", "data": report}
+    await matrix_manager.broadcast(frame_event)
 
-    async def collect(payload: dict[str, Any]) -> None:
-        events.append(payload)
-        await matrix_manager.broadcast(payload)
+    signal_event = None
+    if new_marker:
+        signal_event = {"event": "matrix_signal", "marker": new_marker.to_dict()}
+        await matrix_manager.broadcast(signal_event)
 
-    await _scan_once(symbol, price_per_degree, leverage, collect)
-    frame = next((e for e in events if e.get("event") == "matrix_frame"), None)
-    signal = next((e for e in events if e.get("event") == "matrix_signal"), None)
-    return {
-        "frame": frame,
-        "signal": signal,
-    }
+    return {"frame": frame_event, "signal": signal_event}

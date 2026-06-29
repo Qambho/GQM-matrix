@@ -7,15 +7,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-import ephem
-import numpy as np
 import pandas as pd
 
+from gqm_matrix.celestial_ephemeris import sidereal_longitude
 from gqm_matrix.lattice_band import lattice_extremes_from_primary
 
 logger = logging.getLogger("MWAnchor")
 
-# Fractal bars each side for confirmed 5m swings
 SWING_LEFT_BARS = 2
 SWING_RIGHT_BARS = 2
 
@@ -28,6 +26,7 @@ class FrozenSwingAnchor:
     anchor_timestamp: datetime
     pivot_type: str
     static_anchor: float
+    ppd_cal: float
     moon_degree_at_pivot: float
     sun_degree_at_pivot: float
     mars_degree_at_pivot: float
@@ -42,32 +41,24 @@ class FrozenSwingAnchor:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "anchor_price": round(self.anchor_price, 2),
-            "sun_anchor_price": round(self.sun_anchor_price, 2),
+            "anchor_price": round(float(self.anchor_price), 2),
+            "sun_anchor_price": round(float(self.sun_anchor_price), 2),
             "anchor_timestamp": self.anchor_timestamp.isoformat(),
             "pivot_type": self.pivot_type,
-            "static_anchor": round(self.static_anchor, 2),
-            "moon_degree_at_pivot": round(self.moon_degree_at_pivot, 2),
-            "sun_degree_at_pivot": round(self.sun_degree_at_pivot, 2),
-            "mars_degree_at_pivot": round(self.mars_degree_at_pivot, 2),
-            "primary_vector_support": round(self.primary_vector_support, 2),
-            "upper_lattice_node": round(self.upper_lattice_node, 2),
-            "lower_lattice_node": round(self.lower_lattice_node, 2),
-            "exit_upper_node": round(self.exit_upper_node, 2),
-            "sun_crossing_price": round(self.sun_anchor_price, 2),
-            "lookback_high": round(self.lookback_high, 2),
-            "lookback_low": round(self.lookback_low, 2),
+            "static_anchor": round(float(self.static_anchor), 2),
+            "ppd_cal": round(float(self.ppd_cal), 4),
+            "moon_degree_at_pivot": round(float(self.moon_degree_at_pivot), 2),
+            "sun_degree_at_pivot": round(float(self.sun_degree_at_pivot), 2),
+            "mars_degree_at_pivot": round(float(self.mars_degree_at_pivot), 2),
+            "primary_vector_support": round(float(self.primary_vector_support), 2),
+            "upper_lattice_node": round(float(self.upper_lattice_node), 2),
+            "lower_lattice_node": round(float(self.lower_lattice_node), 2),
+            "exit_upper_node": round(float(self.exit_upper_node), 2),
+            "sun_crossing_price": round(float(self.sun_anchor_price), 2),
+            "lookback_high": round(float(self.lookback_high), 2),
+            "lookback_low": round(float(self.lookback_low), 2),
             "anchor_lookback_interval": self.anchor_lookback_interval,
         }
-
-
-def sidereal_longitude(body: ephem.Body, dt: datetime, ayanamsha: float) -> float:
-    from datetime import timezone
-
-    utc_dt = dt.astimezone(timezone.utc) if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
-    ephem_date = utc_dt.strftime("%Y/%m/%d %H:%M:%S")
-    body.compute(ephem_date)
-    return float((np.degrees(ephem.Ecliptic(body).lon) - ayanamsha) % 360.0)
 
 
 def _to_dt(value: Any) -> datetime:
@@ -103,7 +94,6 @@ def find_last_swings(
     left: int = SWING_LEFT_BARS,
     right: int = SWING_RIGHT_BARS,
 ) -> tuple[tuple[float, datetime, int] | None, tuple[float, datetime, int] | None]:
-    """Return the most recent confirmed swing high and swing low on the series."""
     last_high: tuple[float, datetime, int] | None = None
     last_low: tuple[float, datetime, int] | None = None
     n = len(df)
@@ -120,7 +110,6 @@ def find_last_swings(
     return last_high, last_low
 
 
-# Backward-compatible alias
 find_last_15m_swings = find_last_swings
 
 
@@ -128,10 +117,6 @@ def identify_last_swing_pivot(
     df: pd.DataFrame,
     interval_label: str = "5m",
 ) -> tuple[float, datetime, str, float, float]:
-    """
-    Sun anchor = price of the last confirmed swing high or swing low.
-    Never uses CMP / last close as the anchor price.
-    """
     lookback_high = float(df["high"].max())
     lookback_low = float(df["low"].min())
     last_close = float(df["close"].iloc[-1])
@@ -172,53 +157,53 @@ def identify_last_swing_pivot(
 def build_frozen_swing_anchor(
     df: pd.DataFrame,
     ppd: float,
-    ayanamsha: float,
     anchor_lookback_interval: str,
     current_atr: float | None = None,
 ) -> FrozenSwingAnchor:
+    """
+    Capture ppd_cal at swing confirmation and lock static anchor:
+
+        A = P_swing − (λ_Moon × ppd_cal)
+    """
     swing_price, pivot_dt, pivot_type, lookback_high, lookback_low = identify_last_swing_pivot(
         df,
         interval_label=anchor_lookback_interval,
     )
     last_close = float(df["close"].iloc[-1])
 
-    moon_deg = sidereal_longitude(ephem.Moon(), pivot_dt, ayanamsha)
-    sun_deg = sidereal_longitude(ephem.Sun(), pivot_dt, ayanamsha)
-    mars_deg = sidereal_longitude(ephem.Mars(), pivot_dt, ayanamsha)
+    moon_deg = sidereal_longitude("moon", pivot_dt)
+    sun_deg = sidereal_longitude("sun", pivot_dt)
+    mars_deg = sidereal_longitude("mars", pivot_dt)
 
-    sun_anchor_price = swing_price
-    anchor_price = swing_price
-
-    static_anchor = anchor_price - (moon_deg * ppd)
-    primary = static_anchor + (moon_deg * ppd)
-    extremes = lattice_extremes_from_primary(primary, ppd, current_atr)
-    upper = extremes["upper_lattice_node"]
-    lower = extremes["lower_lattice_node"]
-    exit_upper = extremes["exit_upper_node"]
+    ppd_cal = float(ppd)
+    static_anchor = swing_price - (moon_deg * ppd_cal)
+    primary = static_anchor + (moon_deg * ppd_cal)
+    extremes = lattice_extremes_from_primary(primary, ppd_cal, current_atr)
 
     logger.info(
-        "Sun anchor from %s %s: price=%.2f @ %s | CMP=%.2f (not used) | ppd=%.2f",
+        "Sun anchor from %s %s: price=%.2f @ %s | CMP=%.2f (not used) | ppd_cal=%.2f",
         anchor_lookback_interval,
         pivot_type,
-        sun_anchor_price,
+        swing_price,
         pivot_dt.isoformat(),
         last_close,
-        ppd,
+        ppd_cal,
     )
 
     return FrozenSwingAnchor(
-        anchor_price=anchor_price,
+        anchor_price=swing_price,
         anchor_timestamp=pivot_dt,
         pivot_type=pivot_type,
         static_anchor=static_anchor,
+        ppd_cal=ppd_cal,
         moon_degree_at_pivot=moon_deg,
         sun_degree_at_pivot=sun_deg,
         mars_degree_at_pivot=mars_deg,
         primary_vector_support=primary,
-        upper_lattice_node=upper,
-        lower_lattice_node=lower,
-        exit_upper_node=exit_upper,
-        sun_anchor_price=sun_anchor_price,
+        upper_lattice_node=extremes["upper_lattice_node"],
+        lower_lattice_node=extremes["lower_lattice_node"],
+        exit_upper_node=extremes["exit_upper_node"],
+        sun_anchor_price=swing_price,
         lookback_high=lookback_high,
         lookback_low=lookback_low,
         anchor_lookback_interval=anchor_lookback_interval,
@@ -230,13 +215,13 @@ def build_mw_vertices(
     ppd: float | None = None,
     current_atr: float | None = None,
 ) -> dict[str, Any]:
-    """Build MW vertices; optional ppd/atr override frozen lattice prices for dynamic grid."""
     source = f"{frozen.anchor_lookback_interval}_last_swing"
+    cal_ppd = frozen.ppd_cal
     if ppd is not None and ppd != 0:
         moon = frozen.moon_degree_at_pivot
-        static = frozen.anchor_price - (moon * ppd)
-        primary = static + (moon * ppd)
-        extremes = lattice_extremes_from_primary(primary, ppd, current_atr)
+        static = frozen.static_anchor
+        primary = static + (moon * cal_ppd)
+        extremes = lattice_extremes_from_primary(primary, cal_ppd, current_atr)
         exit_upper = extremes["exit_upper_node"]
         entry_upper = extremes["upper_lattice_node"]
         entry_lower = extremes["lower_lattice_node"]

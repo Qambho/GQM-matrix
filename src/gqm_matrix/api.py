@@ -13,9 +13,7 @@ from gqm_matrix.live_stream import start_live_stream, stop_live_stream, websocke
 from gqm_matrix.markers import get_marker_manager
 from gqm_matrix.matrix_stream import (
     MatrixStreamContext,
-    matrix_manager,
     stop_matrix_stream,
-    trigger_manual_scan,
     websocket_matrix,
 )
 from gqm_matrix.schemas import HealthResponse, MarkerListResponse, MatrixScanResponse, SignalMarkerResponse
@@ -39,7 +37,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="GQM Astro-Quant Platform",
     description="Live liquidation and whale-flow streamer with astro-quant confluence analysis.",
-    version="1.1.0",
+    version="1.2.0",
     lifespan=lifespan,
 )
 
@@ -66,21 +64,18 @@ def list_matrix_markers(symbol: str = Query(default="BTCUSDT")) -> MarkerListRes
     )
 
 
-@app.get("/api/matrix/scan", response_model=MatrixScanResponse)
+@app.get("/api/matrix/scan", response_model=MatrixScanResponse, deprecated=True)
 async def matrix_scan(
     symbol: str = Query(default="BTCUSDT"),
     price_per_degree: float = Query(default=200.0, ge=1.0),
     leverage: int = Query(default=50, ge=1, le=125),
 ) -> MatrixScanResponse:
+    """
+    Deprecated — use WebSocket ``/ws/matrix`` for live telemetry.
+
+    Retained for backward compatibility; performs a single synchronous snapshot only.
+    """
     try:
-        result = await trigger_manual_scan(
-            symbol,
-            price_per_degree,
-            leverage,
-        )
-        frame_event = result.get("frame")
-        if frame_event and frame_event.get("data"):
-            return MatrixScanResponse(**frame_event["data"])
         engine = get_engine(symbol=symbol, price_per_degree=price_per_degree, leverage=leverage)
         report = engine.run_matrix_scanner()
         return MatrixScanResponse(**report)
@@ -97,12 +92,11 @@ async def ws_matrix(
     price_per_degree: float = Query(default=200.0),
     leverage: int = Query(default=50),
 ) -> None:
-    sym = symbol.upper()
     await websocket_matrix(
         websocket,
-        symbol=sym,
-        price_per_degree=price_per_degree,
-        leverage=leverage,
+        symbol=symbol.upper(),
+        price_per_degree=float(price_per_degree),
+        leverage=int(leverage),
         stream_ctx=_matrix_stream_ctx,
     )
 

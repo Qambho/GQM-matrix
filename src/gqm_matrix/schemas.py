@@ -2,6 +2,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+
 class HealthResponse(BaseModel):
     status: str
 
@@ -13,6 +14,34 @@ class MatrixMarketSnapshot(BaseModel):
     low: float
     atr: float | None
     atr_tolerance: float
+    volume: float | None = None
+    spread: float | None = None
+    best_bid: float | None = None
+    best_ask: float | None = None
+    obi_pct: float | None = None
+    filtered_obi_pct: float | None = None
+    bid_qty: float | None = None
+    ask_qty: float | None = None
+    normalized_x: float | None = None
+
+
+class MatrixVortexSnapshot(BaseModel):
+    price_root: int = 0
+    time_root: int = 0
+    volume_root: int = 0
+    price_vortex: bool = False
+    time_vortex: bool = False
+    volume_vortex: bool = False
+    any_vortex: bool = False
+
+
+class SpoofAlert(BaseModel):
+    price: float
+    side: str
+    pulled_size: float
+    executed_size: float
+    decay: float
+    timestamp_ms: int
 
 
 class MatrixCelestialSnapshot(BaseModel):
@@ -33,6 +62,7 @@ class MatrixGridSnapshot(BaseModel):
     upper_lattice_node: float
     lower_lattice_node: float
     static_anchor: float | None = None
+    ppd_cal: float | None = None
     price_per_degree: float
     lattice_half_band: float | None = None
     band_degrees: float | None = None
@@ -49,6 +79,8 @@ class MatrixGridSnapshot(BaseModel):
     moon_degree_at_pivot: float | None = None
     pivot_type: str | None = None
     last_anchor_candle_close: int | None = None
+    near_harmonic: bool | None = None
+    harmonics: dict[str, Any] | None = None
 
 
 class MatrixDistances(BaseModel):
@@ -87,6 +119,7 @@ class MatrixAccount(BaseModel):
 class MatrixScanResponse(BaseModel):
     symbol: str
     timestamp: str
+    timestamp_ms: int | None = None
     market: MatrixMarketSnapshot
     celestial: MatrixCelestialSnapshot
     grid: MatrixGridSnapshot
@@ -95,6 +128,8 @@ class MatrixScanResponse(BaseModel):
     anchor: dict[str, Any] | None = None
     mw_structure: dict[str, Any] | None = None
     anchor_validation: list[str] = Field(default_factory=list)
+    vortex: MatrixVortexSnapshot | None = None
+    spoof_alerts: list[SpoofAlert] = Field(default_factory=list)
     active_trade: MatrixTrade | None = None
     account: MatrixAccount
     trade_history: list[MatrixTrade] = Field(default_factory=list)

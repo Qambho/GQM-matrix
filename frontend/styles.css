@@ -1127,6 +1127,118 @@ body {
   pointer-events: none;
 }
 
+.matrix-telemetry-hud {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 4;
+  min-width: 168px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(7, 11, 20, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  pointer-events: none;
+}
+
+.matrix-telemetry-hud .hud-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.matrix-telemetry-hud .hud-row:last-child {
+  margin-bottom: 0;
+}
+
+.matrix-telemetry-hud .hud-label {
+  color: var(--muted);
+  min-width: 44px;
+  flex-shrink: 0;
+}
+
+.matrix-telemetry-hud .hud-value {
+  font-weight: 600;
+}
+
+.matrix-telemetry-hud .hud-value.spread-tight {
+  color: #34d399;
+}
+
+.matrix-telemetry-hud .hud-value.spread-wide {
+  color: #fb7185;
+}
+
+.hud-obi-row {
+  flex-wrap: wrap;
+}
+
+.hud-obi-track {
+  position: relative;
+  flex: 1;
+  height: 8px;
+  min-width: 80px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.hud-obi-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 0;
+  transform: translateX(-50%);
+  border-radius: 4px;
+  background: linear-gradient(90deg, #fb7185, #22d3ee);
+  transition: width 0.15s ease, background 0.15s ease;
+}
+
+.hud-obi-pct {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.62rem;
+  color: #e8eefc;
+  z-index: 1;
+}
+
+.hud-obi-filtered {
+  width: 100%;
+  font-size: 0.62rem;
+  text-align: right;
+}
+
+.hud-vortex-rings {
+  display: flex;
+  gap: 8px;
+}
+
+.vortex-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.2);
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 700;
+  transition: box-shadow 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+}
+
+.vortex-dot.active {
+  border-color: #f472b6;
+  color: #fbbf24;
+  box-shadow: 0 0 12px rgba(244, 114, 182, 0.75), 0 0 4px rgba(251, 191, 36, 0.6);
+}
+
 .matrix-chart-caption {
   margin: -8px 0 12px;
   font-size: 0.75rem;

@@ -30,11 +30,8 @@ let ws = null;
 let audioArmed = false;
 let lastAlarmTime = 0;
 let currentPage = "dashboard";
-let matrixScanInFlight = false;
-let matrixFetchActive = false;
-let matrixFetchTimer = null;
-let matrixFetchConfigKey = null;
-const MATRIX_FETCH_INTERVAL_MS = 1000;
+let matrixStreamActive = false;
+let matrixStreamConfigKey = null;
 const MATRIX_CHART_INTERVAL_MS = 5 * 60 * 1000;
 let matrixChartRefreshTimer = null;
 let matrixChartLastRefresh = 0;
@@ -94,7 +91,7 @@ function switchPage(pageId) {
   if (pageId === "matrix") {
     startMarkerAnimation();
   } else {
-    stopMatrixFetch();
+    stopMatrixStream();
     disconnectMatrixWebSocket();
     stopMarkerAnimation();
   }
@@ -408,6 +405,7 @@ function renderMatrixChartSection(data) {
 
   el("mx-lattice-panel").innerHTML += `
     <div class="matrix-kv"><span>Dynamic PPD</span><span>${Number(data.grid.price_per_degree ?? 0).toFixed(2)} · ${data.grid.ppd_source ?? "—"} (×${data.grid.scaling_factor ?? 0.1})</span></div>
+    <div class="matrix-kv"><span>PPD Cal (frozen)</span><span>${Number(data.grid.ppd_cal ?? data.anchor?.ppd_cal ?? 0).toFixed(2)}</span></div>
     <div class="matrix-kv"><span>PPD Fallback</span><span>${Number(data.grid.fallback_ppd ?? 200).toFixed(0)}</span></div>
     <div class="matrix-kv"><span>5m Swing Anchor</span><span>${fmtMoney(data.grid.swing_anchor_price ?? anchor.sun_anchor_price ?? anchor.anchor_price)}</span></div>
     <div class="matrix-kv"><span>Moon @ Pivot</span><span>${data.grid.moon_degree_at_pivot ?? anchor.moon_degree_at_pivot ?? "—"}°</span></div>
@@ -434,6 +432,49 @@ function updateMatrixChartRefreshLabel() {
 
 function shouldRefreshMatrixChart() {
   return matrixChartLastRefresh === 0 || Date.now() - matrixChartLastRefresh >= MATRIX_CHART_INTERVAL_MS;
+}
+
+function renderTelemetryHud(data) {
+  const market = data.market || {};
+  const vortex = data.vortex || {};
+  const atr = Number(market.atr) || 0;
+  const spread = Number(market.spread) || 0;
+
+  const spreadEl = el("mx-spread");
+  if (spreadEl) {
+    spreadEl.textContent = spread > 0 ? `$${spread.toFixed(2)}` : "—";
+    spreadEl.className = "hud-value";
+    if (atr > 0) {
+      spreadEl.classList.add(spread <= atr * 0.02 ? "spread-tight" : "spread-wide");
+    }
+  }
+
+  const obiPct = Number(market.filtered_obi_pct ?? market.obi_pct) || 0;
+  const obiBar = el("mx-obi-bar");
+  const obiLabel = el("mx-obi-pct");
+  if (obiBar && obiLabel) {
+    const width = Math.min(Math.abs(obiPct), 100);
+    obiBar.style.width = `${width}%`;
+    obiBar.style.left = obiPct >= 0 ? "50%" : `${50 - width}%`;
+    obiBar.style.transform = obiPct >= 0 ? "none" : "none";
+    obiBar.style.background =
+      obiPct >= 0
+        ? "linear-gradient(90deg, rgba(52,211,153,0.2), #34d399)"
+        : "linear-gradient(270deg, rgba(251,113,133,0.2), #fb7185)";
+    obiLabel.textContent = `${obiPct >= 0 ? "+" : ""}${obiPct.toFixed(1)}%`;
+  }
+  const filteredEl = el("mx-obi-filtered");
+  if (filteredEl && market.obi_pct != null && market.filtered_obi_pct != null) {
+    filteredEl.textContent = `Raw ${Number(market.obi_pct).toFixed(1)}% · F ${Number(market.filtered_obi_pct).toFixed(1)}%`;
+  }
+
+  const setVortex = (id, active) => {
+    const node = el(id);
+    if (node) node.classList.toggle("active", Boolean(active));
+  };
+  setVortex("mx-vortex-price", vortex.price_vortex);
+  setVortex("mx-vortex-time", vortex.time_vortex);
+  setVortex("mx-vortex-volume", vortex.volume_vortex);
 }
 
 function renderMatrixLiveData(data) {
@@ -475,8 +516,10 @@ function renderMatrixLiveData(data) {
   el("mx-balance").textContent = fmtMoney(data.account.balance);
   el("mx-risk").textContent = `${data.account.risk_per_trade_pct}% risk · ${data.account.leverage}x leverage`;
 
+  renderTelemetryHud(data);
+
   const status = data.signal.status;
-  if (badge && !matrixFetchActive) {
+  if (badge && !matrixStreamActive) {
     badge.textContent = status.replace(/_/g, " ");
   }
   banner.className = "matrix-signal-banner";
@@ -534,18 +577,29 @@ function renderMatrixData(data) {
   renderMatrixLiveData(data);
   if (shouldRefreshMatrixChart()) {
     renderMatrixChartSection(data);
-  } else if (matrixFetchActive && matrixChartState.bounds) {
+  } else if (matrixStreamActive && matrixChartState.bounds) {
     drawMatrixChart(data);
   }
 }
 
 function digitalRoot(value) {
-  let n = Math.abs(Math.round(value));
+  if (typeof value === "string") {
+    const digits = value.replace(/\D/g, "");
+    if (!digits) return 0;
+    let n = [...digits].reduce((s, d) => s + Number(d), 0);
+    while (n > 9) n = String(n).split("").reduce((s, d) => s + Number(d), 0);
+    return n;
+  }
+  let n = Math.abs(Math.round(Number(value)));
   if (n === 0) return 0;
   while (n > 9) {
     n = String(n).split("").reduce((s, d) => s + Number(d), 0);
   }
   return n;
+}
+
+function isVortexRoot(root) {
+  return root === 3 || root === 6 || root === 9;
 }
 
 function priceToZodiacDegree(price, anchor, ppd) {
@@ -562,12 +616,9 @@ function angularDegreeDistance(a, b) {
 }
 
 const CARDINAL_DEGREES = [0, 90, 180, 270];
-const HARMONIC_REVERSAL_TOLERANCE = 5;
+const HARMONIC_LEVELS = 5;
 const CARDINAL_DEGREE_TOLERANCE = 2;
-
-function livePriceToZodiacDegree(livePrice) {
-  return ((livePrice % 360) + 360) % 360;
-}
+const NORMALIZED_X_SCALE = 0.06;
 
 function dynamicLatticeHalfBand(ppd, currentAtr) {
   if (!ppd || ppd <= 0) return 0;
@@ -579,16 +630,19 @@ function buildHarmonicNodes(primaryVector, ppd, currentAtr) {
   const halfBand = dynamicLatticeHalfBand(ppd, currentAtr);
   if (halfBand <= 0) return [];
 
-  return [
-    { price: primaryVector + halfBand / 3, side: "upper", pct: 33 },
-    { price: primaryVector + (halfBand * 2) / 3, side: "upper", pct: 66 },
-    { price: primaryVector - halfBand / 3, side: "lower", pct: 33 },
-    { price: primaryVector - (halfBand * 2) / 3, side: "lower", pct: 66 },
-  ];
+  const step = halfBand / HARMONIC_LEVELS;
+  const nodes = [];
+  for (let n = 1; n <= HARMONIC_LEVELS; n += 1) {
+    const pct = Math.round((n / HARMONIC_LEVELS) * 100);
+    nodes.push({ price: primaryVector + n * step, side: "upper", pct, n });
+    nodes.push({ price: primaryVector - n * step, side: "lower", pct, n });
+  }
+  return nodes;
 }
 
-function isNearHarmonicNode(livePrice, nodes, tolerance = HARMONIC_REVERSAL_TOLERANCE) {
-  return nodes.some((node) => Math.abs(livePrice - node.price) <= tolerance);
+function isNearHarmonicNode(livePrice, nodes, tolerance) {
+  const tol = Number(tolerance) || 0;
+  return nodes.some((node) => Math.abs(livePrice - node.price) <= tol);
 }
 
 function nearCardinalDegree(deg, tolerance = CARDINAL_DEGREE_TOLERANCE) {
@@ -625,6 +679,7 @@ function buildMwChartModel(data) {
   const verticesMeta = mw.vertices || {};
   const livePrice = data.market.live_price ?? data.market.price;
   const ppd = data.grid.price_per_degree;
+  const ppdCal = data.grid.ppd_cal ?? data.anchor?.ppd_cal ?? ppd;
   const moonAtPivot = anchorBlock.moon_degree_at_pivot ?? data.grid.moon_degree_at_pivot;
   const swingAnchorPrice =
     anchorBlock.swing_anchor_price ??
@@ -633,9 +688,10 @@ function buildMwChartModel(data) {
     data.grid.swing_anchor_price;
   const anchorPrice = swingAnchorPrice ?? null;
   const staticAnchor =
-    swingAnchorPrice != null && moonAtPivot != null
-      ? swingAnchorPrice - moonAtPivot * ppd
-      : data.grid.primary_vector_support - data.celestial.moon_degree * ppd;
+    anchorBlock.static_anchor ??
+    (swingAnchorPrice != null && moonAtPivot != null
+      ? swingAnchorPrice - moonAtPivot * ppdCal
+      : data.grid.static_anchor ?? data.grid.primary_vector_support - data.celestial.moon_degree * ppdCal);
 
   const A = verticesMeta.A || {
     label: "A",
@@ -906,6 +962,29 @@ function syncMatrixCanvasSize() {
   }
 }
 
+function drawSpoofZones(ctx, alerts, toY, pad, plotW) {
+  if (!alerts?.length) return;
+  ctx.save();
+  for (const alert of alerts) {
+    const y = toY(Number(alert.price));
+    const alpha = Math.max(0.05, Math.min(1, Number(alert.decay) || 0));
+    const color =
+      alert.side === "ask" ? `rgba(251, 191, 36, ${alpha})` : `rgba(251, 113, 133, ${alpha})`;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2 + alpha * 2;
+    ctx.beginPath();
+    ctx.moveTo(pad.l, y);
+    ctx.lineTo(pad.l + plotW, y);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function normalizedSpotX(entryDeg, normalizedX, toX, plotW) {
+  const center = toX(entryDeg);
+  return center + Number(normalizedX) * plotW * NORMALIZED_X_SCALE;
+}
+
 function drawMWMatrixChart(data) {
   const canvas = el("mx-lattice-chart");
   const legend = el("mx-chart-legend");
@@ -931,9 +1010,10 @@ function drawMWMatrixChart(data) {
   const primaryVector = anchorBlock.primary_vector_support ?? data.grid.primary_vector_support;
   const currentAtr = data.market.atr;
   const harmonicNodes = buildHarmonicNodes(primaryVector, ppd, currentAtr);
-  const spotDeg = livePriceToZodiacDegree(livePrice);
-  const spotNearHarmonic = isNearHarmonicNode(livePrice, harmonicNodes);
-  const activeCardinal = nearCardinalDegree(spotDeg);
+  const reversalTol = data.market.atr_tolerance || livePrice * 0.0015;
+  const normalizedX = data.market.normalized_x ?? (currentAtr ? (livePrice - primaryVector) / currentAtr : 0);
+  const spotNearHarmonic = isNearHarmonicNode(livePrice, harmonicNodes, reversalTol);
+  const activeCardinal = nearCardinalDegree(model.moonDegreeLive);
 
   const allPrices = Object.values(wave.pts)
     .filter((p) => p && typeof p.price === "number")
@@ -1035,6 +1115,7 @@ function drawMWMatrixChart(data) {
   }
 
   drawHarmonicNodes(ctx, harmonicNodes, toY, pad, plotW);
+  drawSpoofZones(ctx, data.spoof_alerts, toY, pad, plotW);
 
   const dSize = 14;
   ctx.fillStyle = "rgba(251, 191, 36, 0.2)";
@@ -1192,9 +1273,19 @@ function drawMWMatrixChart(data) {
 
   plotPlanetMarker(model.moonDegreeLive, moonRawPrice, "#c084fc", "☽ Moon", moonAtEntry);
   plotPlanetMarker(model.marsDegreeLive, marsRawPrice, "#fb7185", "♂ Mars", marsAtExit);
+
+  const spotX = normalizedSpotX(wave.entryDeg, normalizedX, toX, plotW);
+  const spotY = toY(livePrice);
   const spotColor = spotNearHarmonic ? "#ef4444" : "#22d3ee";
   const spotTitle = spotNearHarmonic ? "Spot · Reversal" : "Spot";
-  plotPlanetMarker(spotDeg, livePrice, spotColor, spotTitle, false);
+  ctx.fillStyle = spotColor;
+  ctx.beginPath();
+  ctx.arc(spotX, spotY, 5, 0, Math.PI * 2);
+  ctx.fill();
+  drawLabelBox(ctx, spotX, spotY, spotTitle, [fmtMoney(livePrice), `Δ ${Number(normalizedX).toFixed(2)} ATR`], {
+    accent: spotColor,
+    position: spotX > (entryX + exitX) / 2 ? "left-top" : "right-top",
+  });
 
   ctx.strokeStyle = "rgba(255,255,255,0.35)";
   ctx.lineWidth = 1.5;
@@ -1228,7 +1319,7 @@ function drawMWMatrixChart(data) {
   if (legend) {
     legend.classList.remove("muted");
     const reversalTag = spotNearHarmonic
-      ? `<span class="legend-item"><span class="legend-dot" style="background:#ef4444"></span>Reversal zone (±$${HARMONIC_REVERSAL_TOLERANCE})</span>`
+      ? `<span class="legend-item"><span class="legend-dot" style="background:#ef4444"></span>Reversal zone (±${Number(reversalTol).toFixed(2)})</span>`
       : "";
     const cardinalTag = activeCardinal != null
       ? `<span class="legend-item"><span class="legend-dot" style="background:#fbbf24"></span>Cardinal ${activeCardinal}° window</span>`
@@ -1237,7 +1328,7 @@ function drawMWMatrixChart(data) {
       <span class="legend-item"><span class="legend-dot" style="background:#c084fc"></span>M line (upper)</span>
       <span class="legend-item"><span class="legend-dot" style="background:#34d399"></span>W line (lower)</span>
       <span class="legend-item"><span class="legend-dot" style="background:#fbbf24"></span>☉ Sun @ ${fmtMoney(sunMeta.anchor_price ?? sunMeta.price)}</span>
-      <span class="legend-item"><span class="legend-dot" style="background:${spotColor}"></span>Live ${fmtMoney(livePrice)} @ ${spotDeg.toFixed(1)}°</span>
+      <span class="legend-item"><span class="legend-dot" style="background:${spotColor}"></span>Live ${fmtMoney(livePrice)} · ${Number(normalizedX).toFixed(2)} ATR</span>
       ${reversalTag}
       ${cardinalTag}
       <span class="legend-item">Markers: ${matrixMarkerManager.count()}</span>`;
@@ -1246,7 +1337,8 @@ function drawMWMatrixChart(data) {
   matrixChartState.bounds = { pad, plotW, plotH, yMin: model._yMin, yMax: model._yMax, W, H };
   matrixChartState.harmonicNodes = harmonicNodes;
   matrixChartState.spotNearHarmonic = spotNearHarmonic;
-  matrixChartState.activeCardinal = activeCardinal;
+  matrixChartState.spotNormalizedX = normalizedX;
+  matrixChartState.spoofAlerts = data.spoof_alerts || [];
   matrixChartState.lastData = data;
   drawMatrixMarkers(performance.now());
 }
@@ -1366,7 +1458,6 @@ function handleMatrixEvent(msg) {
   }
   if (msg.event === "matrix_frame" && msg.data) {
     if (!matrixPayloadMatchesView(msg.data)) return;
-    if (matrixFetchActive) return;
     renderMatrixData(msg.data);
     return;
   }
@@ -1375,7 +1466,16 @@ function handleMatrixEvent(msg) {
     matrixMarkerManager.add(msg.marker);
     drawMatrixMarkers(performance.now());
     const badge = el("matrix-fetch-badge");
-    if (badge && matrixFetchActive) badge.textContent = "LIVE";
+    if (badge && matrixStreamActive) badge.textContent = "LIVE";
+  }
+  if (msg.event === "matrix_error") {
+    const badge = el("matrix-fetch-badge");
+    if (badge) badge.textContent = "ERROR";
+    const banner = el("matrix-signal-banner");
+    if (banner) {
+      banner.className = "matrix-signal-banner short";
+      banner.textContent = msg.message || "Matrix stream error";
+    }
   }
 }
 
@@ -1396,6 +1496,12 @@ function syncMatrixWebSocket() {
   matrixWsUrl = url;
   wsMatrix = new WebSocket(url);
 
+  wsMatrix.onopen = () => {
+    const badge = el("matrix-fetch-badge");
+    if (badge) badge.textContent = "LIVE";
+    setMatrixStreamLoading(false);
+  };
+
   wsMatrix.onmessage = (e) => {
     try {
       handleMatrixEvent(JSON.parse(e.data));
@@ -1407,7 +1513,9 @@ function syncMatrixWebSocket() {
   wsMatrix.onclose = () => {
     wsMatrix = null;
     matrixWsUrl = null;
-    if (currentPage === "matrix" && matrixFetchActive) {
+    if (currentPage === "matrix" && matrixStreamActive) {
+      const badge = el("matrix-fetch-badge");
+      if (badge) badge.textContent = "RECONNECT";
       setTimeout(syncMatrixWebSocket, 3000);
     }
   };
@@ -1426,14 +1534,14 @@ function drawMatrixChart(data) {
   drawMWMatrixChart(data);
 }
 
-function setMatrixFetchLoading(loading) {
+function setMatrixStreamLoading(loading) {
   const btn = el("matrix-fetch-btn");
   if (!btn) return;
   btn.classList.toggle("loading", loading);
   btn.setAttribute("aria-busy", loading ? "true" : "false");
 }
 
-function setMatrixFetchLive(active) {
+function setMatrixStreamLive(active) {
   const btn = el("matrix-fetch-btn");
   if (btn) btn.classList.toggle("live", active);
 }
@@ -1448,7 +1556,7 @@ function stopMatrixChartRefreshTimer() {
 function startMatrixChartRefreshTimer() {
   stopMatrixChartRefreshTimer();
   matrixChartRefreshTimer = setInterval(() => {
-    if (!matrixFetchActive || !matrixLastPayload) return;
+    if (!matrixStreamActive || !matrixLastPayload) return;
     if (shouldRefreshMatrixChart()) {
       renderMatrixChartSection(matrixLastPayload);
     } else {
@@ -1457,77 +1565,38 @@ function startMatrixChartRefreshTimer() {
   }, 60 * 1000);
 }
 
-function stopMatrixFetch() {
-  matrixFetchActive = false;
-  matrixFetchConfigKey = null;
-  if (matrixFetchTimer) {
-    clearInterval(matrixFetchTimer);
-    matrixFetchTimer = null;
-  }
+function stopMatrixStream() {
+  matrixStreamActive = false;
+  matrixStreamConfigKey = null;
   stopMatrixChartRefreshTimer();
   matrixChartLastRefresh = 0;
   matrixLastPayload = null;
-  setMatrixFetchLive(false);
-  setMatrixFetchLoading(false);
+  setMatrixStreamLive(false);
+  setMatrixStreamLoading(false);
+  disconnectMatrixWebSocket();
   const badge = el("matrix-fetch-badge");
   if (badge) badge.textContent = "IDLE";
 }
 
-async function fetchMatrixTick() {
-  if (!matrixFetchActive || matrixScanInFlight) return;
-
-  const controls = getMatrixControls();
-  if (matrixFetchConfigKey !== matrixConfigKey(controls)) return;
-
-  const { symbol, ppd, leverage } = controls;
-  const badge = el("matrix-fetch-badge");
-
-  matrixScanInFlight = true;
-  setMatrixFetchLoading(true);
-
-  try {
-    const url = `/api/matrix/scan?symbol=${encodeURIComponent(symbol)}&price_per_degree=${encodeURIComponent(ppd)}&leverage=${encodeURIComponent(leverage)}`;
-    const response = await fetch(url);
-    const payload = await response.json();
-    if (!response.ok) throw new Error(payload.detail || "Matrix fetch failed.");
-    if (!matrixFetchActive || !matrixPayloadMatchesView(payload)) return;
-    matrixLastPayload = payload;
-    renderMatrixLiveData(payload);
-    if (shouldRefreshMatrixChart()) {
-      renderMatrixChartSection(payload);
-    }
-    if (badge) badge.textContent = "LIVE";
-  } catch (error) {
-    if (badge) badge.textContent = "ERROR";
-    el("matrix-signal-banner").className = "matrix-signal-banner short";
-    el("matrix-signal-banner").textContent = error.message;
-  } finally {
-    matrixScanInFlight = false;
-    setMatrixFetchLoading(false);
-  }
-}
-
-function startMatrixFetch() {
+function startMatrixStream() {
   const controls = getMatrixControls();
   const configKey = matrixConfigKey(controls);
 
-  stopMatrixFetch();
+  stopMatrixStream();
 
   matrixViewConfig = controls;
-  matrixFetchConfigKey = configKey;
-  matrixFetchActive = true;
-
+  matrixStreamConfigKey = configKey;
+  matrixStreamActive = true;
   matrixChartLastRefresh = 0;
 
-  syncMatrixWebSocket();
-  setMatrixFetchLive(true);
+  setMatrixStreamLive(true);
+  setMatrixStreamLoading(true);
   startMatrixChartRefreshTimer();
 
   const badge = el("matrix-fetch-badge");
-  if (badge) badge.textContent = "FETCHING";
+  if (badge) badge.textContent = "CONNECTING";
 
-  fetchMatrixTick();
-  matrixFetchTimer = setInterval(fetchMatrixTick, MATRIX_FETCH_INTERVAL_MS);
+  syncMatrixWebSocket();
 }
 
 function connectWebSocket() {
@@ -1571,7 +1640,7 @@ function init() {
     updateMomentum();
   });
 
-  el("matrix-fetch-btn").addEventListener("click", startMatrixFetch);
+  el("matrix-fetch-btn").addEventListener("click", startMatrixStream);
 
   el("aspect-info-btn")?.addEventListener("click", openAspectModal);
   document.querySelectorAll("[data-close-modal]").forEach((node) => {

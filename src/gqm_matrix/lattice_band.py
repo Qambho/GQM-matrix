@@ -43,6 +43,34 @@ def lattice_extremes_from_primary(
     }
 
 
+HARMONIC_LEVELS = 5
+
+
+def build_harmonic_nodes(
+    primary: float,
+    half_band: float,
+    levels: int = HARMONIC_LEVELS,
+) -> dict[str, list[dict[str, float | int | str]]]:
+    """
+    Split half_band into equal vertical steps (20% … 100%) above and below primary.
+
+    H_up,n = P_primary + (n × half_band / 5)  for n ∈ {1..5}
+    """
+    if half_band <= 0 or levels <= 0:
+        return {"upper": [], "lower": []}
+
+    step = float(half_band) / float(levels)
+    upper: list[dict[str, float | int | str]] = []
+    lower: list[dict[str, float | int | str]] = []
+
+    for n in range(1, levels + 1):
+        pct = int((n / levels) * 100)
+        upper.append({"n": n, "pct": pct, "price": round(primary + n * step, 2), "side": "upper"})
+        lower.append({"n": n, "pct": pct, "price": round(primary - n * step, 2), "side": "lower"})
+
+    return {"upper": upper, "lower": lower}
+
+
 def lattice_extremes_meta(
     ppd: float,
     current_atr: float | None,

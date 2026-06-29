@@ -175,7 +175,7 @@
             <span id="matrix-fetch-badge" class="chip">IDLE</span>
             <button type="button" id="matrix-fetch-btn" class="btn btn-primary matrix-fetch-btn">
               <span class="btn-spinner" aria-hidden="true"></span>
-              <span class="btn-label">Fetch</span>
+              <span class="btn-label">Connect Stream</span>
             </button>
           </div>
         </div>
@@ -244,13 +244,35 @@
 
         <article class="card matrix-chart-card">
           <h2 class="section-title">MW Geometric Matrix</h2>
-          <p class="matrix-chart-caption">x → 360° zodiac · y → price · lattice grid refreshes every 5 minutes</p>
+          <p class="matrix-chart-caption">x → 360° zodiac · y → price · live WebSocket telemetry · grid refreshes every 5 minutes</p>
           <div class="matrix-chart-stack">
             <canvas id="mx-lattice-chart" class="matrix-chart mw-matrix-canvas" width="640" height="360"></canvas>
             <canvas id="mx-markers-canvas" class="matrix-chart mw-matrix-overlay" width="640" height="360"></canvas>
+            <div id="mx-telemetry-hud" class="matrix-telemetry-hud" aria-live="polite">
+              <div class="hud-row">
+                <span class="hud-label">Spread</span>
+                <span id="mx-spread" class="hud-value">—</span>
+              </div>
+              <div class="hud-row hud-obi-row">
+                <span class="hud-label">OBI</span>
+                <div class="hud-obi-track">
+                  <div id="mx-obi-bar" class="hud-obi-fill"></div>
+                  <span id="mx-obi-pct" class="hud-obi-pct">0%</span>
+                </div>
+                <span id="mx-obi-filtered" class="hud-obi-filtered muted-block">F: —</span>
+              </div>
+              <div class="hud-row hud-vortex-row">
+                <span class="hud-label">3-6-9</span>
+                <div class="hud-vortex-rings">
+                  <span id="mx-vortex-price" class="vortex-dot" title="Price vortex">P</span>
+                  <span id="mx-vortex-time" class="vortex-dot" title="Time vortex">T</span>
+                  <span id="mx-vortex-volume" class="vortex-dot" title="Volume vortex">V</span>
+                </div>
+              </div>
+            </div>
           </div>
-          <div id="mx-chart-legend" class="matrix-chart-legend muted">Click Fetch to render the matrix.</div>
-          <div id="mx-lattice-panel" class="matrix-level-list muted">Click Fetch to load lattice nodes.</div>
+          <div id="mx-chart-legend" class="matrix-chart-legend muted">Click Connect Stream to render the matrix.</div>
+          <div id="mx-lattice-panel" class="matrix-level-list muted">Click Connect Stream to load lattice nodes.</div>
         </article>
 
         <article class="card matrix-trades-card">
@@ -316,7 +338,7 @@
   </div>
 
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" crossorigin="anonymous" />
-  <script src="/app.js?v=27"></script>
+  <script src="/app.js?v=28"></script>
   <script src="/docs.js?v=3"></script>
 </body>
 </html>

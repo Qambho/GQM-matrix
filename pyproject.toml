@@ -16,7 +16,7 @@ dependencies = [
     "numpy>=1.26.0",
     "pandas>=2.2.0",
     "requests>=2.31.0",
-    "ephem>=4.1.0",
+    "pyswisseph>=2.10.0",
 ]
 
 [project.scripts]
