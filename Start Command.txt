@@ -1,26 +1,82 @@
-GQM Astro-Quant — Start Commands
-================================
+GQM Astro-Quant Matrix — How to Run
+=====================================
 
-First time setup:
+Prerequisites
+  • Python 3.10+ installed (python --version)
+  • Internet access (Binance live streams + market data)
+  • Optional: Redis on 127.0.0.1:6379 for liquidation/whale feed
+    (If Redis is not running, the app uses an in-memory mock automatically.)
+
+
+STEP 1 — Open the project folder (PowerShell)
   cd c:\Users\HP\Documents\GitHub\GQM-matrix
+
+
+STEP 2 — First-time setup (run once)
   python -m venv .venv
   .\.venv\Scripts\Activate.ps1
+  pip install --upgrade pip
   pip install -e .
 
-Start server:
+  Windows note:
+    pyswisseph requires Microsoft C++ Build Tools on Windows.
+    Until that is installed, the app uses ephem (Lahiri fallback) automatically.
+    For full pyswisseph on Windows, install:
+      https://visualstudio.microsoft.com/visual-cpp-build-tools/
+    then run:  pip install pyswisseph
+
+
+STEP 3 — Start the server (every session)
   cd c:\Users\HP\Documents\GitHub\GQM-matrix
   .\.venv\Scripts\Activate.ps1
   python -m gqm_matrix.server
 
-Or without activating venv:
+  Or without activating the venv:
   .\.venv\Scripts\python.exe -m gqm_matrix.server
 
-Open in browser:
-  http://127.0.0.1:8000
+  Alternative entry point (same server):
+  .\.venv\Scripts\python.exe main.py
 
-Stop server:
-  Ctrl + C
 
-If port 8000 is in use:
+STEP 4 — Open the dashboard
+  Browser:  http://127.0.0.1:8000
+
+  • Dashboard / Live Feed — liquidation & whale streams (WebSocket /ws/signals)
+  • GQM Matrix — visual radar (WebSocket /ws/matrix)
+    1. Go to "GQM Matrix" in the sidebar
+    2. Choose symbol / PPD fallback / leverage
+    3. Click "Connect Stream"
+    4. Canvas + spread / OBI / 3-6-9 vortex HUD update in real time
+
+
+STEP 5 — Verify the backend is up (optional)
+  http://127.0.0.1:8000/api/health
+  Expected response:  {"status":"ok"}
+
+
+STEP 6 — Stop the server
+  Press  Ctrl + C  in the terminal where uvicorn is running
+
+
+Troubleshooting
+---------------
+
+"ModuleNotFoundError: No module named 'gqm_matrix'"
+  → Run STEP 2 again from the project root with the venv activated.
+
+Port 8000 already in use:
   Get-Process python* -ErrorAction SilentlyContinue | Stop-Process -Force
-  python -m gqm_matrix.server
+  Then restart STEP 3.
+
+PowerShell blocks venv activation:
+  Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+  Then retry:  .\.venv\Scripts\Activate.ps1
+
+Matrix page shows IDLE / no live data:
+  → Click "Connect Stream" on the GQM Matrix page.
+  → Check the server terminal for Binance connection errors.
+
+Redis optional (for Live Feed liquidations):
+  If you have Docker:
+    docker run -d -p 6379:6379 redis:7
+  Or install Redis for Windows and start it on port 6379.
