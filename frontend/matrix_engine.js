@@ -58,11 +58,15 @@ function renderNodes(nodes, spotPrice) {
     if (distance <= Math.max(Number(spotPrice) * 0.0001, 5)) {
       row.classList.add("highlight");
     }
-    if (node.support_wall) row.classList.add("geo-node-support");
-    if (node.resistance_wall) row.classList.add("geo-node-resistance");
+    if (node.spoofed) row.classList.add("geo-node-spoofed");
+    if (node.support_wall && !node.spoofed) row.classList.add("geo-node-support");
+    if (node.resistance_wall && !node.spoofed) row.classList.add("geo-node-resistance");
 
     let wallTag = "";
-    if (node.support_wall) {
+    if (node.spoofed) {
+      const score = node.support_wall?.spoof_score ?? node.resistance_wall?.spoof_score ?? 0;
+      wallTag = `<span class="geo-wall-tag rose">⚠️ SPOOF (${score})</span>`;
+    } else if (node.support_wall) {
       wallTag = `<span class="geo-wall-tag emerald">SUPPORT ${formatBtcSize(node.support_wall.volume)}</span>`;
     } else if (node.resistance_wall) {
       wallTag = `<span class="geo-wall-tag rose">RESIST ${formatBtcSize(node.resistance_wall.volume)}</span>`;
@@ -113,13 +117,29 @@ function renderSignalLog(lines) {
   panel.className = "geo-signal-log";
   panel.innerHTML = lines
     .slice(-12)
-    .map((line) => `<div class="geo-signal-log-line">${line}</div>`)
+    .map((line) => {
+      const isSpoof = line.includes("SPOOF");
+      const cls = isSpoof ? "geo-signal-log-line geo-signal-spoof" : "geo-signal-log-line";
+      return `<div class="${cls}">${line}</div>`;
+    })
     .join("");
 }
 
 function renderSignalBanner(data) {
   const banner = geEl("ge-signal-banner");
   if (!banner) return;
+
+  if (data.vacuum_breakout) {
+    banner.className = "matrix-signal-banner trade geo-vacuum-banner";
+    banner.textContent = `⚡ ${data.vacuum_breakout.label || "VACUUM BREAKOUT — momentum through spoof"}`;
+    return;
+  }
+
+  if (data.triple_confluence && data.active_wall_spoofed) {
+    banner.className = "matrix-signal-banner trade geo-spoof-banner";
+    banner.textContent = "⚠️ TRIPLE CONFLUENCE — liquidity wall SPOOFED (vacuum level, no quadruple)";
+    return;
+  }
 
   if (data.quadruple_confluence) {
     const wall = data.active_liquidity_wall;

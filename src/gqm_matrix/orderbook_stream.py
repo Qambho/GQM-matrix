@@ -240,48 +240,63 @@ async def _binance_loop(symbol: str, ctx: OrderbookStreamContext) -> None:
 
 
 async def _bybit_loop(symbol: str, ctx: OrderbookStreamContext) -> None:
-    topic = f"orderbook.{BOOK_DEPTH}.{symbol}"
+    depth_topic = f"orderbook.{BOOK_DEPTH}.{symbol}"
+    trade_topic = f"publicTrade.{symbol}"
     book = BybitOrderbook()
 
     while True:
         try:
             async with websockets.connect(BYBIT_SPOT_WS, ping_interval=20, ping_timeout=20) as ws:
-                await ws.send(json.dumps({"op": "subscribe", "args": [topic]}))
+                await ws.send(
+                    json.dumps({"op": "subscribe", "args": [depth_topic, trade_topic]})
+                )
                 logger.info("Bybit order book connected: %s", symbol)
                 while True:
                     raw = await ws.recv()
                     envelope = json.loads(raw)
                     if envelope.get("op") == "subscribe":
                         continue
-                    if envelope.get("topic") != topic:
-                        continue
 
-                    msg_type = envelope.get("type")
-                    data = envelope.get("data") or {}
-                    if msg_type == "snapshot":
-                        book.apply_snapshot(data)
-                    elif msg_type == "delta":
-                        book.apply_delta(data)
-                    else:
-                        continue
+                    topic = str(envelope.get("topic", ""))
+                    if topic == depth_topic:
+                        msg_type = envelope.get("type")
+                        data = envelope.get("data") or {}
+                        if msg_type == "snapshot":
+                            book.apply_snapshot(data)
+                        elif msg_type == "delta":
+                            book.apply_delta(data)
+                        else:
+                            continue
 
-                    bids, asks = book.levels(BOOK_DEPTH)
-                    try:
-                        from gqm_matrix.matrix_engine_service import push_bybit_depth
+                        bids, asks = book.levels(BOOK_DEPTH)
+                        try:
+                            from gqm_matrix.matrix_engine_service import push_bybit_depth, push_bybit_trade
 
-                        push_bybit_depth(bids, asks)
-                    except Exception:
-                        pass
-                    ctx.bybit_book = build_book_snapshot(
-                        "Bybit",
-                        "Spot",
-                        symbol,
-                        bids,
-                        asks,
-                        update_id=book.update_id,
-                        timestamp_ms=int(book.timestamp_ms or envelope.get("ts") or 0) or None,
-                    )
-                    await _broadcast_combined(ctx)
+                            push_bybit_depth(bids, asks)
+                        except Exception:
+                            pass
+                        ctx.bybit_book = build_book_snapshot(
+                            "Bybit",
+                            "Spot",
+                            symbol,
+                            bids,
+                            asks,
+                            update_id=book.update_id,
+                            timestamp_ms=int(book.timestamp_ms or envelope.get("ts") or 0) or None,
+                        )
+                        await _broadcast_combined(ctx)
+                    elif topic == trade_topic:
+                        try:
+                            from gqm_matrix.matrix_engine_service import push_bybit_trade
+
+                            for trade in envelope.get("data") or []:
+                                price = float(trade.get("p", 0))
+                                qty = float(trade.get("v", 0))
+                                ts = int(trade.get("T") or trade.get("ts") or envelope.get("ts") or 0)
+                                if price > 0 and qty > 0:
+                                    push_bybit_trade(price, qty, ts or None)
+                        except Exception:
+                            pass
         except asyncio.CancelledError:
             raise
         except Exception as exc:

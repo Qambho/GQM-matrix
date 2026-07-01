@@ -1,30 +1,34 @@
 """Background service wrapper for ``src/matrix_engine.py`` (logic unchanged)."""
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 import threading
 import time
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
+
+import websockets
 
 _SRC_DIR = Path(__file__).resolve().parents[1]
 if str(_SRC_DIR) not in sys.path:
     sys.path.insert(0, str(_SRC_DIR))
 
 import matrix_engine  # noqa: E402
-from gqm_matrix.bybit_market import fetch_linear_ohlcv_rows, fetch_linear_ticker
+from gqm_matrix.bybit_market import BYBIT_SPOT_WS, BybitOrderbook, fetch_linear_ohlcv_rows, fetch_linear_ticker
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 _ENGINE_THREAD_NAME = "geo-matrix-engine"
-_DEPTH_THREAD_NAME = "geo-bybit-depth"
+_DEPTH_THREAD_NAME = "geo-bybit-depth-ws"
 _engine_thread: threading.Thread | None = None
 _depth_thread: threading.Thread | None = None
 _start_lock = threading.Lock()
 _original_print = None
 BYBIT_DEPTH_SYMBOL = "BTCUSDT"
-BYBIT_DEPTH_POLL_SECONDS = 0.5
+BYBIT_DEPTH_LEVELS = 50
+BYBIT_DEPTH_POLL_SECONDS = 1.0
 
 
 def push_bybit_depth(bids: list[tuple[float, float]], asks: list[tuple[float, float]]) -> None:
@@ -32,24 +36,87 @@ def push_bybit_depth(bids: list[tuple[float, float]], asks: list[tuple[float, fl
     matrix_engine.update_bybit_orderbook(bids, asks)
 
 
-def _poll_bybit_depth_loop() -> None:
+def push_bybit_trade(price: float, qty: float, timestamp_ms: int | None = None) -> None:
+    matrix_engine.update_bybit_trade(price, qty, timestamp_ms)
+
+
+async def _bybit_market_ws_loop(
+    on_depth: Callable[[list[tuple[float, float]], list[tuple[float, float]]], None],
+    on_trade: Callable[[float, float, int | None], None],
+) -> None:
+    """Subscribe to Bybit Spot orderbook + publicTrade streams."""
+    depth_topic = f"orderbook.{BYBIT_DEPTH_LEVELS}.{BYBIT_DEPTH_SYMBOL}"
+    trade_topic = f"publicTrade.{BYBIT_DEPTH_SYMBOL}"
+    book = BybitOrderbook()
+
+    while True:
+        try:
+            async with websockets.connect(BYBIT_SPOT_WS, ping_interval=20, ping_timeout=20) as ws:
+                await ws.send(
+                    json.dumps({"op": "subscribe", "args": [depth_topic, trade_topic]})
+                )
+                while True:
+                    raw = await ws.recv()
+                    envelope = json.loads(raw)
+                    if envelope.get("op") == "subscribe":
+                        continue
+
+                    topic = str(envelope.get("topic", ""))
+                    if topic == depth_topic:
+                        msg_type = envelope.get("type")
+                        data = envelope.get("data") or {}
+                        if msg_type == "snapshot":
+                            book.apply_snapshot(data)
+                        elif msg_type == "delta":
+                            book.apply_delta(data)
+                        else:
+                            continue
+                        bids, asks = book.levels(BYBIT_DEPTH_LEVELS)
+                        if bids or asks:
+                            on_depth(bids, asks)
+                    elif topic == trade_topic:
+                        for trade in envelope.get("data") or []:
+                            price = float(trade.get("p", 0))
+                            qty = float(trade.get("v", 0))
+                            ts = int(trade.get("T") or trade.get("ts") or envelope.get("ts") or 0)
+                            if price > 0 and qty > 0:
+                                on_trade(price, qty, ts or None)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            await asyncio.sleep(3)
+
+
+def _poll_bybit_depth_fallback() -> None:
+    """REST fallback when the WebSocket feed is unavailable."""
     while True:
         try:
             url = (
                 "https://api.bybit.com/v5/market/orderbook"
-                f"?category=spot&symbol={BYBIT_DEPTH_SYMBOL}&limit=50"
+                f"?category=spot&symbol={BYBIT_DEPTH_SYMBOL}&limit={BYBIT_DEPTH_LEVELS}"
             )
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
             with urllib.request.urlopen(req, timeout=3.0) as response:
                 payload = json.loads(response.read().decode())
-            result = (payload.get("result") or {})
-            bids = [(float(p), float(q)) for p, q in result.get("b", [])[:50]]
-            asks = [(float(p), float(q)) for p, q in result.get("a", [])[:50]]
+            result = payload.get("result") or {}
+            bids = [(float(p), float(q)) for p, q in result.get("b", [])[:BYBIT_DEPTH_LEVELS]]
+            asks = [(float(p), float(q)) for p, q in result.get("a", [])[:BYBIT_DEPTH_LEVELS]]
             if bids or asks:
                 push_bybit_depth(bids, asks)
         except Exception:
             pass
         time.sleep(BYBIT_DEPTH_POLL_SECONDS)
+
+
+def _run_bybit_depth_ws() -> None:
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        loop.run_until_complete(
+            _bybit_market_ws_loop(push_bybit_depth, push_bybit_trade)
+        )
+    finally:
+        loop.close()
 
 
 def _run_engine_headless() -> None:
@@ -78,7 +145,7 @@ def start_matrix_engine_service() -> None:
     with _start_lock:
         if _depth_thread is None or not _depth_thread.is_alive():
             _depth_thread = threading.Thread(
-                target=_poll_bybit_depth_loop,
+                target=_run_bybit_depth_ws,
                 name=_DEPTH_THREAD_NAME,
                 daemon=True,
             )

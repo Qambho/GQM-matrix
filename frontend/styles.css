@@ -1717,6 +1717,29 @@ body {
   color: #fde68a;
 }
 
+.geo-signal-spoof {
+  background: rgba(251, 113, 133, 0.12) !important;
+  border-color: rgba(251, 113, 133, 0.35) !important;
+  color: var(--rose) !important;
+}
+
+.geo-spoof-banner {
+  border-color: rgba(251, 113, 133, 0.5) !important;
+  background: rgba(251, 113, 133, 0.12) !important;
+  color: var(--rose) !important;
+}
+
+.geo-vacuum-banner {
+  border-color: rgba(34, 211, 238, 0.45) !important;
+  background: rgba(34, 211, 238, 0.1) !important;
+  color: var(--cyan) !important;
+}
+
+.geo-node-spoofed {
+  border-color: rgba(251, 113, 133, 0.45) !important;
+  background: rgba(251, 113, 133, 0.1) !important;
+}
+
 .geo-wall-tag {
   display: inline-block;
   margin-left: 6px;

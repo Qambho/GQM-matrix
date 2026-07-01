@@ -56,9 +56,20 @@ ENGINE_DATA_STREAM: Dict[str, object] = {}
 LATEST_BYBIT_ORDERBOOK: Dict[str, object] = {"bids": [], "asks": []}
 FROZEN_SIGNAL_LOG: Deque[str] = deque(maxlen=12)
 LIQUIDITY_WALL_MULTIPLIER = 3.0
-LATEST_BYBIT_ORDERBOOK: Dict[str, List[List[float]]] = {"bids": [], "asks": []}
-FROZEN_SIGNAL_LOG: Deque[str] = deque(maxlen=12)
-LIQUIDITY_WALL_MULTIPLIER = 3.0
+
+# Spoof detector configuration
+TRACKED_WALLS: Dict[str, Dict[str, object]] = {}
+RECENT_BYBIT_TRADES: Deque[Dict[str, float]] = deque(maxlen=2000)
+SPOOFED_LEVELS: Dict[str, Dict[str, object]] = {}
+LAST_SPOOF_PRUNE_AT: float = 0.0
+LAST_SPOT_PRICE: float = 0.0
+TRACKED_WALL_MIN_BTC = 40.0
+SPOOF_PROXIMITY_POINTS = 10.0
+SPOOF_VOLUME_DROP_RATIO = 0.5
+SPOOF_FLICKER_WINDOW_SEC = 5.0
+SPOOF_PRUNE_INTERVAL_SEC = 30.0
+SPOOF_PRICE_RANGE = 800.0
+SPOOF_ADJACENT_POINTS = 5.0
 
 NAKSHATRAS = [
     "Ashwini", "Bharani", "Krittika", "Rohini", "Mrigashira", "Ardra",
@@ -354,6 +365,199 @@ def update_bybit_orderbook(
         "bids": [(float(level[0]), float(level[1])) for level in bids[:50]],
         "asks": [(float(level[0]), float(level[1])) for level in asks[:50]],
     }
+
+
+def update_bybit_trade(price: float, qty: float, timestamp_ms: Optional[int] = None) -> None:
+    """Record Bybit public trade fills for spoof-vs-pull validation."""
+    ts = float(timestamp_ms or int(time.time() * 1000)) / 1000.0
+    RECENT_BYBIT_TRADES.append({"price": float(price), "qty": float(qty), "ts": ts})
+
+
+def _wall_key(side: str, price: float) -> str:
+    return f"{side}:{round(float(price), 2)}"
+
+
+def _trade_volume_at_price(price: float, window_sec: float = 0.5) -> float:
+    now = time.time()
+    total = 0.0
+    for trade in RECENT_BYBIT_TRADES:
+        if now - trade["ts"] > window_sec:
+            continue
+        if abs(trade["price"] - price) <= SPOOF_ADJACENT_POINTS:
+            total += trade["qty"]
+    return total
+
+
+def _prune_tracked_walls(spot_price: float) -> None:
+    global LAST_SPOOF_PRUNE_AT
+    now = time.time()
+    if now - LAST_SPOOF_PRUNE_AT < SPOOF_PRUNE_INTERVAL_SEC:
+        return
+    LAST_SPOOF_PRUNE_AT = now
+
+    stale_keys: List[str] = []
+    for key, wall in TRACKED_WALLS.items():
+        price = float(wall["price"])
+        if abs(price - spot_price) > SPOOF_PRICE_RANGE:
+            stale_keys.append(key)
+    for key in stale_keys:
+        TRACKED_WALLS.pop(key, None)
+
+    stale_spoof: List[str] = []
+    for key, meta in SPOOFED_LEVELS.items():
+        if now - float(meta.get("detected_at", 0)) > 120.0:
+            stale_spoof.append(key)
+        elif abs(float(meta.get("price", 0)) - spot_price) > SPOOF_PRICE_RANGE:
+            stale_spoof.append(key)
+    for key in stale_spoof:
+        SPOOFED_LEVELS.pop(key, None)
+
+
+def _register_flicker(side: str, old_price: float, new_price: float, now: float) -> None:
+    if abs(new_price - old_price) > SPOOF_ADJACENT_POINTS:
+        return
+    for key, wall in TRACKED_WALLS.items():
+        if wall.get("side") != side:
+            continue
+        last_drop = wall.get("last_drop_at")
+        if last_drop is None or now - float(last_drop) > SPOOF_FLICKER_WINDOW_SEC:
+            continue
+        if abs(float(wall["price"]) - new_price) <= SPOOF_ADJACENT_POINTS:
+            wall["spoof_score"] = int(wall.get("spoof_score", 0)) + 1
+
+
+def _flag_spoof(side: str, price: float, prev_volume: float, curr_volume: float, spot_price: float) -> None:
+    key = _wall_key(side, price)
+    wall = TRACKED_WALLS.get(key, {})
+    score = int(wall.get("spoof_score", 0))
+    SPOOFED_LEVELS[key] = {
+        "price": float(price),
+        "side": side,
+        "prev_volume": float(prev_volume),
+        "curr_volume": float(curr_volume),
+        "spoof_score": score,
+        "classification": "SPOOF_DETECTED",
+        "detected_at": time.time(),
+        "spot_price": float(spot_price),
+    }
+    log_line = (
+        f"{datetime.now(timezone.utc).strftime('%H:%M:%S')} "
+        f"| ⚠️ SPOOF DETECTED | {side.upper()} @ {price:,.2f} | "
+        f"Score: {score} | Pull: {prev_volume:.2f}→{curr_volume:.2f} BTC"
+    )
+    if not FROZEN_SIGNAL_LOG or FROZEN_SIGNAL_LOG[-1] != log_line:
+        FROZEN_SIGNAL_LOG.append(log_line)
+
+
+def process_spoof_detection(spot_price: float) -> None:
+    """Analyze Bybit depth updates for proximity-pull spoofing."""
+    global LAST_SPOT_PRICE
+    LAST_SPOT_PRICE = float(spot_price)
+    _prune_tracked_walls(spot_price)
+
+    bids = _normalize_book_levels(LATEST_BYBIT_ORDERBOOK.get("bids"))
+    asks = _normalize_book_levels(LATEST_BYBIT_ORDERBOOK.get("asks"))
+    now = time.time()
+
+    current_levels: Dict[str, Tuple[float, float]] = {}
+    watch_keys: set[str] = set(TRACKED_WALLS.keys())
+    for side, levels in (("bid", bids), ("ask", asks)):
+        for price, volume in levels:
+            key = _wall_key(side, price)
+            current_levels[key] = (price, volume)
+            if volume >= TRACKED_WALL_MIN_BTC:
+                watch_keys.add(key)
+
+    for key in watch_keys:
+        side, price_str = key.split(":", 1)
+        price = float(price_str)
+        volume = float(current_levels.get(key, (price, 0.0))[1])
+
+        prev = TRACKED_WALLS.get(key)
+        prev_volume = float(prev["volume"]) if prev else volume
+
+        if prev and float(prev["volume"]) >= TRACKED_WALL_MIN_BTC:
+            drop_ratio = 1.0 - (volume / float(prev["volume"])) if prev["volume"] else 0.0
+            near_wall = abs(spot_price - price) <= SPOOF_PROXIMITY_POINTS
+            if near_wall and drop_ratio >= SPOOF_VOLUME_DROP_RATIO:
+                executed = _trade_volume_at_price(price)
+                removed = float(prev["volume"]) - volume
+                if removed > 0 and executed < removed * 0.10:
+                    prev["last_drop_at"] = now
+                    prev["spoof_score"] = int(prev.get("spoof_score", 0)) + 1
+                    _flag_spoof(side, price, float(prev["volume"]), volume, spot_price)
+
+        if (
+            prev
+            and float(prev.get("volume", 0)) < TRACKED_WALL_MIN_BTC <= volume
+        ):
+            _register_flicker(side, float(prev["price"]), price, now)
+
+        if volume >= TRACKED_WALL_MIN_BTC or prev:
+            TRACKED_WALLS[key] = {
+                "price": float(price),
+                "side": side,
+                "volume": float(volume),
+                "prev_volume": prev_volume,
+                "spoof_score": int((prev or {}).get("spoof_score", 0)),
+                "last_updated": now,
+                "last_drop_at": (prev or {}).get("last_drop_at"),
+            }
+        elif key in TRACKED_WALLS:
+            TRACKED_WALLS.pop(key, None)
+
+
+def is_level_spoofed(price: float, side: str) -> bool:
+    key = _wall_key(side, price)
+    if key in SPOOFED_LEVELS:
+        return True
+    for spoof_key, meta in SPOOFED_LEVELS.items():
+        if meta.get("side") != side:
+            continue
+        if abs(float(meta.get("price", 0)) - price) <= SPOOF_ADJACENT_POINTS:
+            return True
+    return False
+
+
+def apply_spoof_flags_to_nodes(node_confluence: List[Dict[str, object]]) -> None:
+    for entry in node_confluence:
+        entry["spoofed"] = False
+        entry["vacuum_level"] = False
+        for wall_key, side in (("support_wall", "bid"), ("resistance_wall", "ask")):
+            wall = entry.get(wall_key)
+            if not wall:
+                continue
+            if is_level_spoofed(float(wall["price"]), side):
+                entry["spoofed"] = True
+                wall["classification"] = "SPOOF_DETECTED"
+                wall["spoof_score"] = int(
+                    SPOOFED_LEVELS.get(_wall_key(side, float(wall["price"])), {}).get("spoof_score", 0)
+                )
+
+
+def detect_vacuum_breakout(
+    spot_price: float,
+    node_confluence: List[Dict[str, object]],
+    adaptive_tolerance: float,
+) -> Optional[Dict[str, object]]:
+    """Spoofed node treated as vacuum — breakout implies momentum, not reversal."""
+    for entry in node_confluence:
+        if not entry.get("spoofed"):
+            continue
+        node_price = float(entry["price"])
+        if entry.get("support_wall") and spot_price < node_price - adaptive_tolerance:
+            return {
+                "angle": int(entry["angle"]),
+                "direction": "BEARISH",
+                "label": "VACUUM BREAKOUT — bearish momentum through spoofed support",
+            }
+        if entry.get("resistance_wall") and spot_price > node_price + adaptive_tolerance:
+            return {
+                "angle": int(entry["angle"]),
+                "direction": "BULLISH",
+                "label": "VACUUM BREAKOUT — bullish momentum through spoofed resistance",
+            }
+    return None
 
 
 def _normalize_book_levels(levels: object) -> List[Tuple[float, float]]:
@@ -659,6 +863,9 @@ def main() -> None:
             price_per_degree_scale,
             adaptive_tolerance=dynamic_tolerance,
         )
+        process_spoof_detection(price_flt)
+        apply_spoof_flags_to_nodes(node_confluence)
+        vacuum_breakout = detect_vacuum_breakout(price_flt, node_confluence, dynamic_tolerance)
         liquidity_walls = analyze_orderbook_depth(LATEST_BYBIT_ORDERBOOK)
         countdown, astro_root, active_lord = get_true_astro_gate()
         wave_status, bias = analyze_wave_structure(price_history)
@@ -684,15 +891,39 @@ def main() -> None:
         is_time_gate_open = countdown <= 15 or countdown >= 165
 
         active_liquidity_wall = None
+        active_wall_spoofed = False
         if near_gann_level is not None:
-            hit_price, _ = near_gann_level
-            for wall in liquidity_walls:
-                if abs(float(wall["price"]) - hit_price) <= dynamic_tolerance:
-                    active_liquidity_wall = wall
-                    break
+            _, hit_angle = near_gann_level
+            for entry in node_confluence:
+                if int(entry["angle"]) != int(hit_angle):
+                    continue
+                active_wall_spoofed = bool(entry.get("spoofed"))
+                support = entry.get("support_wall")
+                resistance = entry.get("resistance_wall")
+                if support:
+                    active_liquidity_wall = {
+                        "price": support["price"],
+                        "volume": support["volume"],
+                        "side": "bid",
+                        "classification": support.get("classification", "SUPPORT_WALL"),
+                        "spoof_score": support.get("spoof_score", 0),
+                    }
+                elif resistance:
+                    active_liquidity_wall = {
+                        "price": resistance["price"],
+                        "volume": resistance["volume"],
+                        "side": "ask",
+                        "classification": resistance.get("classification", "RESISTANCE_WALL"),
+                        "spoof_score": resistance.get("spoof_score", 0),
+                    }
+                break
 
         triple_confluence = is_360_root and near_gann_level is not None and is_time_gate_open
-        quadruple_confluence = triple_confluence and active_liquidity_wall is not None
+        quadruple_confluence = (
+            triple_confluence
+            and active_liquidity_wall is not None
+            and not active_wall_spoofed
+        )
         standard_signal = is_360_root and not triple_confluence
 
         # Trade entry logic: create an active_trade when triple_confluence occurs
@@ -755,7 +986,18 @@ def main() -> None:
 
         # Determine Reversal Characteristics
         reversal_type = "NEUTRAL EXHAUSTION NODE"
-        if near_gann_level or target_proximity_lvl:
+        if vacuum_breakout:
+            if vacuum_breakout["direction"] == "BULLISH":
+                reversal_type = (
+                    f"{C_GREEN}VACUUM LEVEL — HIGH MOMENTUM BULLISH BREAKOUT "
+                    f"(spoof cleared @ {vacuum_breakout['angle']}°){C_RESET}"
+                )
+            else:
+                reversal_type = (
+                    f"{C_RED}VACUUM LEVEL — HIGH MOMENTUM BEARISH BREAKOUT "
+                    f"(spoof cleared @ {vacuum_breakout['angle']}°){C_RESET}"
+                )
+        elif near_gann_level or target_proximity_lvl:
             active_node = near_gann_level if near_gann_level else target_proximity_lvl
             if bias == "BULLISH" and price_flt <= active_node[0]:
                 reversal_type = f"{C_GREEN}POTENTIAL BULLISH REVERSAL (LONG ENTRY ZONE){C_RESET}"
@@ -840,7 +1082,14 @@ def main() -> None:
             node_flags = confluence_by_angle.get(angle, {})
             support_wall = node_flags.get("support_wall")
             resistance_wall = node_flags.get("resistance_wall")
-            if support_wall:
+            if node_flags.get("spoofed"):
+                spoof_score = 0
+                if support_wall:
+                    spoof_score = int(support_wall.get("spoof_score", 0))
+                elif resistance_wall:
+                    spoof_score = int(resistance_wall.get("spoof_score", 0))
+                wall_marker = f" {C_RED}| ⚠️ SPOOF DETECTED (score {spoof_score}){C_RESET}"
+            elif support_wall:
                 wall_marker = (
                     f" {C_GREEN}| SUPPORT_WALL {float(support_wall['volume']):.4f} BTC{C_RESET}"
                 )
@@ -867,6 +1116,18 @@ def main() -> None:
                 f"  Target Level: {near_gann_level[0]:,.2f} | Angle: {near_gann_level[1]}° "
                 f"| LIQUIDITY WALL ACTIVE | Size: {wall_volume:.4f} BTC"
             )
+        elif triple_confluence and active_wall_spoofed:
+            spoof_score = int((active_liquidity_wall or {}).get("spoof_score", 0))
+            log_line = (
+                f"{datetime.now(timezone.utc).strftime('%H:%M:%S')} "
+                f"| ⚠️ SPOOF DETECTED | Angle {near_gann_level[1]}° | Score: {spoof_score}"
+            )
+            if not FROZEN_SIGNAL_LOG or FROZEN_SIGNAL_LOG[-1] != log_line:
+                FROZEN_SIGNAL_LOG.append(log_line)
+            print(f"  {C_BG_RED} 🔥🔥🔥 TRIPLE CONFLUENCE (WALL SPOOFED — NO QUADRUPLE) 🔥🔥🔥 {C_RESET}")
+            print(f"  {C_RED}⚠️ SPOOF DETECTED — treating node as VACUUM LEVEL{C_RESET}")
+            print(f"  CHARACTER: {reversal_type}")
+            print(f"  Target Level: {near_gann_level[0]:,.2f} | Angle: {near_gann_level[1]}°")
         elif triple_confluence:
             print(f"  {C_BG_RED} 🔥🔥🔥 TRIPLE CONFLUENCE DETECTED 🔥🔥🔥 {C_RESET}")
             print(f"  CHARACTER: {reversal_type}")
@@ -907,6 +1168,8 @@ def main() -> None:
                     lambda lvl, ang, conf: {
                         "price": lvl,
                         "angle": ang,
+                        "spoofed": bool(conf.get("spoofed")),
+                        "vacuum_level": bool(conf.get("spoofed")),
                         **(
                             {"support_wall": conf["support_wall"]}
                             if conf.get("support_wall")
@@ -924,6 +1187,10 @@ def main() -> None:
             "liquidity_walls": liquidity_walls,
             "node_confluence": node_confluence,
             "active_liquidity_wall": active_liquidity_wall,
+            "active_wall_spoofed": active_wall_spoofed,
+            "vacuum_breakout": vacuum_breakout,
+            "spoofed_levels": list(SPOOFED_LEVELS.values()),
+            "tracked_walls_count": len(TRACKED_WALLS),
             "active_trade": active_trade,
             "triple_confluence": triple_confluence,
             "quadruple_confluence": quadruple_confluence,
