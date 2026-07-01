@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/styles.css?v=14" />
+  <link rel="stylesheet" href="/styles.css?v=18" />
 </head>
 <body>
   <div class="layout">
@@ -32,6 +32,14 @@
       <button type="button" class="nav-item" data-page="matrix">
         <span class="nav-icon" aria-hidden="true">⬡</span>
         GQM Matrix
+      </button>
+      <button type="button" class="nav-item" data-page="geo-engine">
+        <span class="nav-icon" aria-hidden="true">◉</span>
+        Geo Engine
+      </button>
+      <button type="button" class="nav-item" data-page="orderbook">
+        <span class="nav-icon" aria-hidden="true">▥</span>
+        Orderbook
       </button>
       <button type="button" class="nav-item" data-page="feed">
         <span class="nav-icon" aria-hidden="true">◎</span>
@@ -283,6 +291,229 @@
         </article>
       </section>
 
+      <!-- Geo Engine (matrix_engine.py) -->
+      <section id="page-geo-engine" class="page" hidden>
+        <div class="geo-engine-toolbar card">
+          <div class="geo-engine-toolbar-left">
+            <span id="ge-status-badge" class="chip">INITIALIZING</span>
+            <span id="ge-last-update" class="card-hint">Awaiting first telemetry tick…</span>
+          </div>
+          <button type="button" id="ge-refresh-btn" class="btn btn-ghost">Refresh Now</button>
+        </div>
+
+        <div id="ge-signal-banner" class="matrix-signal-banner hidden"></div>
+
+        <div class="stat-grid geo-engine-stat-grid">
+          <article class="card stat-card">
+            <span class="card-label">Spot Price</span>
+            <span id="ge-spot-price" class="stat-value cyan">—</span>
+            <span class="card-hint">BTCUSDT · Bybit Linear</span>
+          </article>
+          <article class="card stat-card">
+            <span class="card-label">Wave Phasing</span>
+            <span id="ge-wave-status" class="stat-value amber">—</span>
+            <span id="ge-bias" class="card-hint">Bias —</span>
+          </article>
+          <article class="card stat-card">
+            <span class="card-label">Nakshatra</span>
+            <span id="ge-nakshatra" class="stat-value purple">—</span>
+            <span class="card-hint">Sidereal lunar step</span>
+          </article>
+          <article class="card stat-card">
+            <span class="card-label">Price Root · Dasha Root</span>
+            <span id="ge-roots" class="stat-value">—</span>
+            <span id="ge-dasha-lord" class="card-hint">Lord —</span>
+          </article>
+          <article class="card stat-card">
+            <span class="card-label">Dasha Transition</span>
+            <span id="ge-countdown" class="stat-value">—</span>
+            <span id="ge-gate-state" class="card-hint">Time gate —</span>
+          </article>
+          <article class="card stat-card">
+            <span class="card-label">Anchor · Scale</span>
+            <span id="ge-anchor" class="stat-value">—</span>
+            <span id="ge-scale" class="card-hint">PPD scale —</span>
+          </article>
+        </div>
+
+        <div class="split-grid geo-engine-split">
+          <article class="card">
+            <h2 class="section-title">Linear Nodes (45° Grid)</h2>
+            <div id="ge-nodes-panel" class="matrix-level-list muted">Waiting for node telemetry…</div>
+          </article>
+
+          <article class="card">
+            <h2 class="section-title">Active Trade</h2>
+            <div id="ge-trade-panel" class="geo-trade-panel muted">No active trade.</div>
+          </article>
+        </div>
+
+        <article class="card geo-signal-log-card">
+          <h2 class="section-title">Frozen Signal Log</h2>
+          <div id="ge-signal-log" class="geo-signal-log muted">No liquidity-wall confluence events yet.</div>
+        </article>
+
+        <div class="split-grid geo-engine-split" style="margin-top:20px;">
+          <article class="card">
+            <h2 class="section-title purple">Jagannatha Hora Dasas</h2>
+            <label class="field-label" for="ge-dasa-input">Paste Ashtottari block</label>
+            <textarea id="ge-dasa-input" class="field-textarea" rows="8" placeholder="Mars: 2026-06-30 (20:24:49) - 2026-06-30 (20:28:10)"></textarea>
+            <button type="button" id="ge-dasa-btn" class="btn btn-primary">Synchronize Dasa Timelines</button>
+          </article>
+
+          <article class="card">
+            <h2 class="section-title">Engine Configuration</h2>
+            <div class="geo-config-grid">
+              <div class="field-inline">
+                <label class="field-label" for="ge-anchor-price">Anchor Price</label>
+                <input id="ge-anchor-price" class="field-input" type="number" step="0.01" />
+              </div>
+              <div class="field-inline">
+                <label class="field-label" for="ge-atr-window">ATR Window (s)</label>
+                <input id="ge-atr-window" class="field-input" type="number" min="60" step="60" />
+              </div>
+              <div class="field-inline">
+                <label class="field-label" for="ge-flank-coef">Flanking Coefficient</label>
+                <input id="ge-flank-coef" class="field-input" type="number" step="0.00001" />
+              </div>
+              <div class="field-inline">
+                <label class="field-label" for="ge-min-scale">Min Scale</label>
+                <input id="ge-min-scale" class="field-input" type="number" step="0.1" />
+              </div>
+              <div class="field-inline">
+                <label class="field-label" for="ge-max-scale">Max Scale</label>
+                <input id="ge-max-scale" class="field-input" type="number" step="1" />
+              </div>
+              <div class="field-inline geo-config-check">
+                <label class="field-label" for="ge-alert-enabled">
+                  <input id="ge-alert-enabled" type="checkbox" />
+                  Android alerts enabled
+                </label>
+              </div>
+            </div>
+            <button type="button" id="ge-config-btn" class="btn btn-primary">Apply Configuration</button>
+            <p id="ge-config-msg" class="card-hint" style="margin-top:10px;"></p>
+          </article>
+        </div>
+      </section>
+
+      <!-- Orderbook -->
+      <section id="page-orderbook" class="page" hidden>
+        <div class="orderbook-toolbar card">
+          <div class="orderbook-toolbar-left">
+            <div class="field-inline">
+              <label class="field-label" for="ob-symbol">Symbol</label>
+              <select id="ob-symbol" class="field-select">
+                <option value="BTCUSDT">BTCUSDT</option>
+                <option value="ETHUSDT">ETHUSDT</option>
+                <option value="SOLUSDT">SOLUSDT</option>
+                <option value="BNBUSDT">BNBUSDT</option>
+                <option value="XRPUSDT">XRPUSDT</option>
+              </select>
+            </div>
+            <span id="ob-symbol-label" class="card-hint">BTCUSDT · Spot depth 50</span>
+          </div>
+          <div class="orderbook-toolbar-actions">
+            <span id="ob-connect-badge" class="chip">DISCONNECTED</span>
+            <button type="button" id="ob-connect-btn" class="btn btn-primary orderbook-connect-btn">Connect Stream</button>
+          </div>
+        </div>
+
+        <div class="orderbook-dual">
+          <article class="orderbook-pane card">
+            <header class="orderbook-pane-head">
+              <div>
+                <h2 id="ob-binance-title" class="section-title">Binance · Spot · BTCUSDT</h2>
+                <p id="ob-binance-updated" class="card-hint">—</p>
+              </div>
+              <span id="ob-binance-status" class="chip ob-warn">OFFLINE</span>
+            </header>
+
+            <div class="orderbook-stats">
+              <div class="ob-stat"><span class="field-label">Best Bid</span><span id="ob-binance-best-bid" class="ob-stat-value emerald">—</span></div>
+              <div class="ob-stat"><span class="field-label">Best Ask</span><span id="ob-binance-best-ask" class="ob-stat-value rose">—</span></div>
+              <div class="ob-stat"><span class="field-label">Mid</span><span id="ob-binance-mid" class="ob-stat-value">—</span></div>
+              <div class="ob-stat"><span class="field-label">Spread</span><span id="ob-binance-spread" class="ob-stat-value">—</span></div>
+              <div class="ob-stat"><span class="field-label">OBI</span><span id="ob-binance-obi" class="ob-stat-value">—</span></div>
+              <div class="ob-stat ob-stat-vol ob-stat-bid-vol" id="ob-binance-bid-vol-card">
+                <div class="ob-stat-main">
+                  <span class="field-label">Bid Vol</span>
+                  <span id="ob-binance-bid-vol" class="ob-stat-value">—</span>
+                </div>
+                <span id="ob-binance-bid-vol-arrow" class="ob-vol-arrow flat" aria-hidden="true">—</span>
+              </div>
+              <div class="ob-stat ob-stat-vol ob-stat-ask-vol" id="ob-binance-ask-vol-card">
+                <div class="ob-stat-main">
+                  <span class="field-label">Ask Vol</span>
+                  <span id="ob-binance-ask-vol" class="ob-stat-value">—</span>
+                </div>
+                <span id="ob-binance-ask-vol-arrow" class="ob-vol-arrow flat" aria-hidden="true">—</span>
+              </div>
+              <div class="ob-stat"><span class="field-label">Bid $</span><span id="ob-binance-bid-notional" class="ob-stat-value">—</span></div>
+              <div class="ob-stat"><span class="field-label">Ask $</span><span id="ob-binance-ask-notional" class="ob-stat-value">—</span></div>
+              <div class="ob-stat"><span class="field-label">Depth</span><span id="ob-binance-levels" class="ob-stat-value">—</span></div>
+              <div class="ob-stat"><span class="field-label">Update</span><span id="ob-binance-update-id" class="ob-stat-value">—</span></div>
+            </div>
+
+            <div class="orderbook-table-head">
+              <span>Price</span><span>Size</span><span>Total</span><span>Notional</span>
+            </div>
+            <div id="ob-binance-asks" class="orderbook-side orderbook-asks">
+              <div class="ob-empty">Connect stream to load asks…</div>
+            </div>
+            <div id="ob-binance-spread-row" class="orderbook-spread-row">—</div>
+            <div id="ob-binance-bids" class="orderbook-side orderbook-bids"></div>
+          </article>
+
+          <div class="orderbook-separator" aria-hidden="true"></div>
+
+          <article class="orderbook-pane card">
+            <header class="orderbook-pane-head">
+              <div>
+                <h2 id="ob-bybit-title" class="section-title cyan">Bybit · Spot · BTCUSDT</h2>
+                <p id="ob-bybit-updated" class="card-hint">—</p>
+              </div>
+              <span id="ob-bybit-status" class="chip ob-warn">OFFLINE</span>
+            </header>
+
+            <div class="orderbook-stats">
+              <div class="ob-stat"><span class="field-label">Best Bid</span><span id="ob-bybit-best-bid" class="ob-stat-value emerald">—</span></div>
+              <div class="ob-stat"><span class="field-label">Best Ask</span><span id="ob-bybit-best-ask" class="ob-stat-value rose">—</span></div>
+              <div class="ob-stat"><span class="field-label">Mid</span><span id="ob-bybit-mid" class="ob-stat-value">—</span></div>
+              <div class="ob-stat"><span class="field-label">Spread</span><span id="ob-bybit-spread" class="ob-stat-value">—</span></div>
+              <div class="ob-stat"><span class="field-label">OBI</span><span id="ob-bybit-obi" class="ob-stat-value">—</span></div>
+              <div class="ob-stat ob-stat-vol ob-stat-bid-vol" id="ob-bybit-bid-vol-card">
+                <div class="ob-stat-main">
+                  <span class="field-label">Bid Vol</span>
+                  <span id="ob-bybit-bid-vol" class="ob-stat-value">—</span>
+                </div>
+                <span id="ob-bybit-bid-vol-arrow" class="ob-vol-arrow flat" aria-hidden="true">—</span>
+              </div>
+              <div class="ob-stat ob-stat-vol ob-stat-ask-vol" id="ob-bybit-ask-vol-card">
+                <div class="ob-stat-main">
+                  <span class="field-label">Ask Vol</span>
+                  <span id="ob-bybit-ask-vol" class="ob-stat-value">—</span>
+                </div>
+                <span id="ob-bybit-ask-vol-arrow" class="ob-vol-arrow flat" aria-hidden="true">—</span>
+              </div>
+              <div class="ob-stat"><span class="field-label">Bid $</span><span id="ob-bybit-bid-notional" class="ob-stat-value">—</span></div>
+              <div class="ob-stat"><span class="field-label">Ask $</span><span id="ob-bybit-ask-notional" class="ob-stat-value">—</span></div>
+              <div class="ob-stat"><span class="field-label">Depth</span><span id="ob-bybit-levels" class="ob-stat-value">—</span></div>
+              <div class="ob-stat"><span class="field-label">Update</span><span id="ob-bybit-update-id" class="ob-stat-value">—</span></div>
+            </div>
+
+            <div class="orderbook-table-head">
+              <span>Price</span><span>Size</span><span>Total</span><span>Notional</span>
+            </div>
+            <div id="ob-bybit-asks" class="orderbook-side orderbook-asks">
+              <div class="ob-empty">Connect stream to load asks…</div>
+            </div>
+            <div id="ob-bybit-spread-row" class="orderbook-spread-row">—</div>
+            <div id="ob-bybit-bids" class="orderbook-side orderbook-bids"></div>
+          </article>
+        </div>
+      </section>
+
       <!-- Live Feed -->
       <section id="page-feed" class="page" hidden>
         <div class="feed-header">
@@ -338,7 +569,9 @@
   </div>
 
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" crossorigin="anonymous" />
-  <script src="/app.js?v=28"></script>
+  <script src="/app.js?v=30"></script>
+  <script src="/matrix_engine.js?v=3"></script>
+  <script src="/orderbook.js?v=2"></script>
   <script src="/docs.js?v=3"></script>
 </body>
 </html>

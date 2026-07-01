@@ -11,25 +11,37 @@ from fastapi.staticfiles import StaticFiles
 from gqm_matrix.godzilla_engine import get_engine
 from gqm_matrix.live_stream import start_live_stream, stop_live_stream, websocket_signals
 from gqm_matrix.markers import get_marker_manager
+from gqm_matrix.matrix_engine_service import (
+    get_config as get_matrix_engine_config,
+    get_metrics as get_matrix_engine_metrics,
+    start_matrix_engine_service,
+    update_config as update_matrix_engine_config,
+    update_dasa as update_matrix_engine_dasa,
+)
 from gqm_matrix.matrix_stream import (
     MatrixStreamContext,
     stop_matrix_stream,
     websocket_matrix,
 )
+from gqm_matrix.orderbook_stream import OrderbookStreamContext, stop_orderbook_stream, websocket_orderbook
 from gqm_matrix.schemas import HealthResponse, MarkerListResponse, MatrixScanResponse, SignalMarkerResponse
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 FRONTEND_DIR = PROJECT_ROOT / "frontend"
 DOCS_DIR = PROJECT_ROOT / "docs"
 _matrix_stream_ctx = MatrixStreamContext()
+_orderbook_stream_ctx = OrderbookStreamContext()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    start_matrix_engine_service()
     live_ctx = await start_live_stream()
     app.state.live_ctx = live_ctx
     app.state.matrix_stream_ctx = _matrix_stream_ctx
+    app.state.orderbook_stream_ctx = _orderbook_stream_ctx
     yield
+    await stop_orderbook_stream(_orderbook_stream_ctx)
     await stop_matrix_stream(_matrix_stream_ctx)
     await stop_live_stream(live_ctx)
 
@@ -53,6 +65,39 @@ app.add_middleware(
 @app.get("/api/health", response_model=HealthResponse)
 def health() -> HealthResponse:
     return HealthResponse(status="ok")
+
+
+@app.get("/api/matrix-engine/metrics")
+def matrix_engine_metrics() -> dict:
+    return get_matrix_engine_metrics()
+
+
+@app.get("/api/matrix-engine/config")
+def matrix_engine_config_get() -> dict:
+    return get_matrix_engine_config()
+
+
+@app.post("/api/matrix-engine/update-dasa")
+async def matrix_engine_update_dasa(body: dict) -> dict:
+    raw_dasa = body.get("raw_dasa")
+    if not isinstance(raw_dasa, str) or not raw_dasa.strip():
+        raise HTTPException(status_code=400, detail="raw_dasa string required")
+    try:
+        update_matrix_engine_dasa(raw_dasa)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {"status": "success", "message": "Dasa timelines synchronized"}
+
+
+@app.post("/api/matrix-engine/config")
+async def matrix_engine_config_post(body: dict) -> dict:
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Configuration payload must be an object")
+    try:
+        config = update_matrix_engine_config(body)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {"status": "success", "message": "Engine configuration updated", "config": config}
 
 
 @app.get("/api/matrix/markers", response_model=MarkerListResponse)
@@ -106,6 +151,18 @@ async def ws_signals(websocket: WebSocket) -> None:
     await websocket_signals(websocket)
 
 
+@app.websocket("/ws/orderbook")
+async def ws_orderbook(
+    websocket: WebSocket,
+    symbol: str = Query(default="BTCUSDT"),
+) -> None:
+    await websocket_orderbook(
+        websocket,
+        symbol=symbol.upper(),
+        stream_ctx=_orderbook_stream_ctx,
+    )
+
+
 @app.get("/api/docs")
 def serve_documentation() -> FileResponse:
     doc_path = DOCS_DIR / "DOCUMENTATION.md"
@@ -127,6 +184,16 @@ def serve_styles() -> FileResponse:
 @app.get("/app.js")
 def serve_app_js() -> FileResponse:
     return FileResponse(FRONTEND_DIR / "app.js", media_type="application/javascript")
+
+
+@app.get("/matrix_engine.js")
+def serve_matrix_engine_js() -> FileResponse:
+    return FileResponse(FRONTEND_DIR / "matrix_engine.js", media_type="application/javascript")
+
+
+@app.get("/orderbook.js")
+def serve_orderbook_js() -> FileResponse:
+    return FileResponse(FRONTEND_DIR / "orderbook.js", media_type="application/javascript")
 
 
 @app.get("/")

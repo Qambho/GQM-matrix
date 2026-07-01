@@ -55,7 +55,21 @@ STEP 5 — Verify the backend is up (optional)
 
 
 STEP 6 — Stop the server
-  Press  Ctrl + C  in the terminal where uvicorn is running
+  Press  Ctrl + C  once in the terminal where uvicorn is running.
+  Wait until you see "Stopping reloader process" and get the prompt back.
+
+  Why it can still run after Ctrl+C:
+    • uvicorn --reload uses TWO Python processes (reloader + worker).
+    • A second copy may still be running if you started the server in another
+      terminal, or Cursor/IDE launched it in the background earlier.
+
+  Force-stop everything on port 8000 (PowerShell):
+  Get-NetTCPConnection -LocalPort 8000 -ErrorAction SilentlyContinue |
+    Select-Object -ExpandProperty OwningProcess -Unique |
+    ForEach-Object { Stop-Process -Id $_ -Force }
+
+  Or kill all Python servers (broader):
+  Get-Process python* -ErrorAction SilentlyContinue | Stop-Process -Force
 
 
 Troubleshooting
@@ -65,8 +79,7 @@ Troubleshooting
   → Run STEP 2 again from the project root with the venv activated.
 
 Port 8000 already in use:
-  Get-Process python* -ErrorAction SilentlyContinue | Stop-Process -Force
-  Then restart STEP 3.
+  Use the force-stop commands in STEP 6, then restart STEP 3.
 
 PowerShell blocks venv activation:
   Set-ExecutionPolicy -Scope CurrentUser RemoteSigned

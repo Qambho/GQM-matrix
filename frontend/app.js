@@ -17,6 +17,14 @@ const PAGE_META = {
     title: "GQM Matrix",
     subtitle: "Godzilla V4 MW vector lattice — Ashtottari Dasa price grid",
   },
+  "geo-engine": {
+    title: "Geo Engine",
+    subtitle: "Geo-Quantum Engine V4 — 3-6-9 matrix with live Bybit telemetry",
+  },
+  orderbook: {
+    title: "Orderbook",
+    subtitle: "Live dual-exchange depth — Binance Spot vs Bybit Spot (50 levels)",
+  },
   docs: {
     title: "Documentation",
     subtitle: "Formulas, lattice math, and reversal radar reference",
@@ -94,6 +102,18 @@ function switchPage(pageId) {
     stopMatrixStream();
     disconnectMatrixWebSocket();
     stopMarkerAnimation();
+  }
+
+  if (pageId === "geo-engine" && typeof startGeoEnginePage === "function") {
+    startGeoEnginePage();
+  } else if (typeof stopGeoEnginePage === "function") {
+    stopGeoEnginePage();
+  }
+
+  if (pageId === "orderbook" && typeof startOrderbookPage === "function") {
+    startOrderbookPage();
+  } else if (typeof stopOrderbookPage === "function") {
+    stopOrderbookPage();
   }
 
   if (pageId === "docs" && typeof loadDocumentationPage === "function") {
@@ -288,7 +308,7 @@ function handleFeedMessage(data) {
   const item = document.createElement("div");
   item.className = "feed-item";
 
-  if (data.source === "binance_futures") {
+  if (data.source === "bybit_linear" || data.source === "binance_futures") {
     item.classList.add("liquidation");
     metrics.totalLiqVolume += data.usd_value;
     if (data.side === "SELL") metrics.longsLiquidated += data.usd_value;

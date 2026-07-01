@@ -8,7 +8,7 @@ from fastapi import WebSocket, WebSocketDisconnect
 
 from gqm_matrix.calcs_matrix import evaluate_matrix_pivot
 from gqm_matrix.ingestion.arkham_client import ArkhamTelemetryEngine
-from gqm_matrix.ingestion.binance_ws import BinanceIngestionEngine
+from gqm_matrix.ingestion.bybit_ws import BybitIngestionEngine
 from gqm_matrix.redis_client import RedisClientManager
 
 
@@ -89,11 +89,11 @@ async def start_live_stream() -> LiveStreamContext:
     ctx = LiveStreamContext()
     redis = await ctx.redis_manager.connect()
 
-    binance_engine = BinanceIngestionEngine(redis)
+    bybit_engine = BybitIngestionEngine(redis)
     arkham_engine = ArkhamTelemetryEngine(redis)
 
     ctx.ingestion_tasks = [
-        asyncio.create_task(binance_engine.start_stream()),
+        asyncio.create_task(bybit_engine.start_stream()),
         asyncio.create_task(arkham_engine.monitor_whale_flows()),
     ]
     ctx.listener_task = asyncio.create_task(redis_pubsub_listener(redis))

@@ -9,7 +9,6 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable
 
 import pandas as pd
-import requests
 import websockets
 
 from gqm_matrix.celestial_aspects import analyze_confluence, degree_to_sign
@@ -32,13 +31,11 @@ from gqm_matrix.mw_anchor import (
     build_mw_vertices,
     validate_anchor_prices,
 )
+from gqm_matrix.bybit_market import BYBIT_LINEAR_WS, BybitOrderbook, fetch_linear_klines_df
 from gqm_matrix.spoof_detector import SpoofDetector
 from gqm_matrix.vortex import vortex_flags
 
 logger = logging.getLogger("GodzillaEngine")
-
-BINANCE_FUTURES_KLINES = "https://fapi.binance.com/fapi/v1/klines"
-BINANCE_FUTURES_WS = "wss://fstream.binance.com/stream"
 
 GRID_SCALING_FACTOR = 0.1
 ANCHOR_INTERVAL = "5m"
@@ -173,6 +170,7 @@ class GodzillaProductionEngine:
         self._ask_qty: float = 0.0
         self._depth_bids: list[tuple[float, float]] = []
         self._depth_asks: list[tuple[float, float]] = []
+        self._bybit_book = BybitOrderbook()
         self._spoof = SpoofDetector()
         self._klines_df: pd.DataFrame | None = None
         self._stream_lock = asyncio.Lock()
@@ -185,38 +183,13 @@ class GodzillaProductionEngine:
         atr_period: int | None = None,
     ) -> pd.DataFrame | None:
         period = atr_period if atr_period is not None else self.atr_period
-        params = {"symbol": self.symbol, "interval": interval, "limit": limit}
         try:
-            response = requests.get(BINANCE_FUTURES_KLINES, params=params, timeout=10)
-            response.raise_for_status()
-            df = pd.DataFrame(
-                response.json(),
-                columns=[
-                    "open_time",
-                    "open",
-                    "high",
-                    "low",
-                    "close",
-                    "volume",
-                    "close_time",
-                    "quote_volume",
-                    "trades",
-                    "tb_base",
-                    "tb_quote",
-                    "ignore",
-                ],
+            return fetch_linear_klines_df(
+                self.symbol,
+                interval=interval,
+                limit=limit,
+                atr_period=period,
             )
-            df["timestamp"] = pd.to_datetime(df["open_time"], unit="ms", utc=True)
-            for col in ["open", "high", "low", "close", "volume"]:
-                df[col] = df[col].astype(float)
-
-            df["prev_close"] = df["close"].shift(1)
-            df["tr1"] = df["high"] - df["low"]
-            df["tr2"] = (df["high"] - df["prev_close"]).abs()
-            df["tr3"] = (df["low"] - df["prev_close"]).abs()
-            df["true_range"] = df[["tr1", "tr2", "tr3"]].max(axis=1)
-            df["atr"] = df["true_range"].rolling(window=period).mean()
-            return df
         except Exception as exc:
             logger.error("Market data fetch failed: %s", exc)
             return None
@@ -573,7 +546,7 @@ class GodzillaProductionEngine:
             limit=max(20, self.anchor_lookback_limit),
         )
         if df_5m is None or df_5m.empty:
-            raise RuntimeError("Unable to fetch market data from Binance.")
+            raise RuntimeError("Unable to fetch market data from Bybit.")
 
         live_5m = df_5m.iloc[-1]
         self._live_price = float(live_5m["close"])
@@ -596,20 +569,15 @@ class GodzillaProductionEngine:
         ts_ms = int(live_5m["close_time"]) if "close_time" in live_5m else None
         return self.build_telemetry_frame(ts_ms)
 
-    def _binance_stream_url(self) -> str:
-        sym = self.symbol.lower()
-        streams = "/".join(
-            [
-                f"{sym}@depth20@100ms",
-                f"{sym}@aggTrade",
-                f"{sym}@bookTicker",
-            ]
-        )
-        return f"{BINANCE_FUTURES_WS}?streams={streams}"
+    def _bybit_stream_topics(self) -> list[str]:
+        return [
+            f"orderbook.50.{self.symbol}",
+            f"publicTrade.{self.symbol}",
+            f"tickers.{self.symbol}",
+        ]
 
-    def _handle_depth(self, payload: dict[str, Any]) -> None:
-        bids = [(float(p), float(q)) for p, q in payload.get("b", [])[:10]]
-        asks = [(float(p), float(q)) for p, q in payload.get("a", [])[:10]]
+    def _sync_depth_from_book(self, depth: int = 10) -> None:
+        bids, asks = self._bybit_book.levels(depth)
         self._depth_bids = bids
         self._depth_asks = asks
         if bids:
@@ -618,22 +586,52 @@ class GodzillaProductionEngine:
         if asks:
             self._best_ask = asks[0][0]
             self._ask_qty = asks[0][1]
-        ts = int(payload.get("E") or payload.get("T") or 0)
-        self._spoof.update_depth(bids, asks, ts)
 
-    def _handle_agg_trade(self, payload: dict[str, Any]) -> None:
-        price = float(payload.get("p", 0))
-        qty = float(payload.get("q", 0))
-        ts = int(payload.get("T") or payload.get("E") or 0)
-        self._live_price = price
-        self._live_volume = qty
-        self._spoof.record_trade(price, qty, ts)
+    def _handle_bybit_orderbook(self, envelope: dict[str, Any]) -> int:
+        msg_type = envelope.get("type")
+        data = envelope.get("data") or {}
+        if msg_type == "snapshot":
+            self._bybit_book.apply_snapshot(data)
+        elif msg_type == "delta":
+            self._bybit_book.apply_delta(data)
+        else:
+            return 0
 
-    def _handle_book_ticker(self, payload: dict[str, Any]) -> None:
-        self._best_bid = float(payload.get("b", 0))
-        self._best_ask = float(payload.get("a", 0))
-        self._bid_qty = float(payload.get("B", 0))
-        self._ask_qty = float(payload.get("A", 0))
+        self._sync_depth_from_book(depth=10)
+        ts = int(self._bybit_book.timestamp_ms or envelope.get("ts") or 0)
+        self._spoof.update_depth(self._depth_bids, self._depth_asks, ts)
+        return ts
+
+    def _handle_bybit_trade(self, envelope: dict[str, Any]) -> int:
+        ts = 0
+        for trade in envelope.get("data") or []:
+            price = float(trade.get("p", 0))
+            qty = float(trade.get("v", 0))
+            ts = int(trade.get("T") or trade.get("ts") or envelope.get("ts") or 0)
+            if price > 0:
+                self._live_price = price
+            if qty > 0:
+                self._live_volume = qty
+            self._spoof.record_trade(price, qty, ts)
+        return ts
+
+    def _handle_bybit_ticker(self, payload: dict[str, Any]) -> int:
+        data = payload
+        if isinstance(payload, list):
+            data = payload[0] if payload else {}
+
+        bid = float(data.get("bid1Price") or 0)
+        ask = float(data.get("ask1Price") or 0)
+        if bid > 0:
+            self._best_bid = bid
+            self._bid_qty = float(data.get("bid1Size") or 0)
+        if ask > 0:
+            self._best_ask = ask
+            self._ask_qty = float(data.get("ask1Size") or 0)
+        last_price = float(data.get("lastPrice") or 0)
+        if last_price > 0:
+            self._live_price = last_price
+        return int(data.get("ts") or 0)
 
     async def run_live_stream(
         self,
@@ -641,15 +639,16 @@ class GodzillaProductionEngine:
         *,
         calibration_interval: float = 30.0,
     ) -> None:
-        """Stream unified telemetry from Binance futures depth + aggTrade + bookTicker."""
+        """Stream unified telemetry from Bybit linear order book, trades, and tickers."""
         await self.refresh_calibration_if_needed()
         last_cal = asyncio.get_event_loop().time()
 
         while True:
             try:
-                url = self._binance_stream_url()
-                logger.info("Connecting Binance live stream: %s", self.symbol)
-                async with websockets.connect(url, ping_interval=20, ping_timeout=20) as ws:
+                topics = self._bybit_stream_topics()
+                logger.info("Connecting Bybit live stream: %s", self.symbol)
+                async with websockets.connect(BYBIT_LINEAR_WS, ping_interval=20, ping_timeout=20) as ws:
+                    await ws.send(json.dumps({"op": "subscribe", "args": topics}))
                     while True:
                         now_loop = asyncio.get_event_loop().time()
                         if now_loop - last_cal >= calibration_interval:
@@ -658,19 +657,22 @@ class GodzillaProductionEngine:
 
                         raw = await ws.recv()
                         envelope = json.loads(raw)
-                        stream = envelope.get("stream", "")
-                        data = envelope.get("data", envelope)
+                        if envelope.get("op") == "subscribe":
+                            continue
 
-                        if "@depth" in stream:
-                            self._handle_depth(data)
-                        elif "@aggTrade" in stream:
-                            self._handle_agg_trade(data)
-                        elif "@bookTicker" in stream:
-                            self._handle_book_ticker(data)
+                        topic = str(envelope.get("topic", ""))
+                        ts_ms = 0
+                        if topic.startswith("orderbook."):
+                            ts_ms = self._handle_bybit_orderbook(envelope)
+                        elif topic.startswith("publicTrade."):
+                            ts_ms = self._handle_bybit_trade(envelope)
+                        elif topic.startswith("tickers."):
+                            ts_ms = self._handle_bybit_ticker(envelope.get("data") or {})
 
-                        ts_ms = int(
-                            data.get("T") or data.get("E") or datetime.now(timezone.utc).timestamp() * 1000
-                        )
+                        if not ts_ms:
+                            ts_ms = int(
+                                envelope.get("ts") or datetime.now(timezone.utc).timestamp() * 1000
+                            )
                         frame = self.build_telemetry_frame(ts_ms)
                         await on_frame({"event": "matrix_frame", "data": frame})
 
